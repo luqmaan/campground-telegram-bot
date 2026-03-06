@@ -245,6 +245,21 @@ function logsMessage(input: {
       lines.push('No runner task has completed yet.');
     } else {
       lines.push(`${result.runner} ${result.status} at ${result.finishedAt}`);
+      if (result.summary) {
+        lines.push(`Summary: ${previewText(result.summary, 220)}`);
+      }
+      if (result.lastKnownStage) {
+        lines.push(`Last stage: ${result.lastKnownStage}`);
+      }
+      if (result.lastKnownSummary) {
+        lines.push(`Last summary: ${previewText(result.lastKnownSummary, 220)}`);
+      }
+      if (result.lastKnownDecision) {
+        lines.push(`Last decision: ${previewText(result.lastKnownDecision, 220)}`);
+      }
+      if (result.lastKnownNextStep) {
+        lines.push(`Last next step: ${previewText(result.lastKnownNextStep, 220)}`);
+      }
       if (result.stdoutTail) {
         lines.push('', 'stdout tail:', tailText(result.stdoutTail, 1400));
       }
