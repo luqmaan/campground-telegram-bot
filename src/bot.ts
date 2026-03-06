@@ -32,6 +32,17 @@ type TelegramMessage = {
   audio?: Record<string, unknown>;
   voice?: Record<string, unknown>;
   message_thread_id?: number;
+  reply_to_message?: {
+    message_id?: number;
+    from?: Record<string, unknown>;
+    text?: string;
+    caption?: string;
+    photo?: unknown[];
+    document?: Record<string, unknown>;
+    video?: Record<string, unknown>;
+    audio?: Record<string, unknown>;
+    voice?: Record<string, unknown>;
+  };
 };
 
 const sessionStore = new SessionStore();
@@ -124,6 +135,34 @@ const monitor = new CampgroundMonitor(sendTelegram);
 const runningTasks = new Map<string, Record<string, unknown>>();
 let manualRunPromise: Promise<void> | null = null;
 
+function messageBodyText(message?: TelegramMessage | Record<string, unknown> | null): string {
+  if (!message) return '';
+  return sanitizeText((message as TelegramMessage).text || (message as TelegramMessage).caption || '');
+}
+
+function replyContextText(message?: TelegramMessage | null): string | null {
+  const reply = message?.reply_to_message;
+  if (!reply) return null;
+
+  const sender = displayName(profileFromTelegramUser(reply.from || {})) || 'Unknown sender';
+  const body = previewText(messageBodyText(reply), 600);
+  const attachmentKinds: string[] = [];
+  if (Array.isArray(reply.photo) && reply.photo.length > 0) attachmentKinds.push('photo');
+  if (reply.document) attachmentKinds.push('document');
+  if (reply.video) attachmentKinds.push('video');
+  if (reply.audio) attachmentKinds.push('audio');
+  if (reply.voice) attachmentKinds.push('voice');
+
+  const lines = [`Replying to ${sender} (message ${reply.message_id || '?'})`];
+  if (body) {
+    lines.push(`Text: ${body}`);
+  }
+  if (attachmentKinds.length > 0) {
+    lines.push(`Attachments: ${attachmentKinds.join(', ')}`);
+  }
+  return lines.join('\n');
+}
+
 function activeTaskHandle(chatId: string | number): Record<string, unknown> | undefined {
   return runningTasks.get(String(chatId));
 }
@@ -201,6 +240,7 @@ async function startRunnerForMessage(input: {
   prompt: string;
   message: TelegramMessage;
   immediateUploads: Array<Record<string, unknown>>;
+  replyContext: string | null;
 }): Promise<void> {
   const chatId = String(input.chatId);
   if (activeTaskHandle(chatId)) {
@@ -225,13 +265,21 @@ async function startRunnerForMessage(input: {
   }
 
   const sender = displayName(profileFromTelegramUser(input.message.from || {}));
-  const historyEntry = uploads.length > 0 ? `${prompt}\nAttachments: ${uploads.map((upload) => upload.fileName).join(', ')}` : prompt;
+  const historyParts = [prompt];
+  if (input.replyContext) {
+    historyParts.push(input.replyContext);
+  }
+  if (uploads.length > 0) {
+    historyParts.push(`Attachments: ${uploads.map((upload) => upload.fileName).join(', ')}`);
+  }
+  const historyEntry = historyParts.join('\n');
   sessionStore.addHistory(chatId, 'user', `${sender}: ${historyEntry}`);
 
   const startTask = input.runner === 'codex' ? startCodexTask : startClaudeTask;
   const stopChatAction = startChatActionPulse(chatId, { threadId: input.threadId });
   const handle = startTask({
     prompt,
+    replyContext: input.replyContext,
     uploads,
     historyContext: sessionStore.historyContext(chatId),
     statusContext: currentStatusMessage(chatId),
@@ -294,6 +342,7 @@ async function handleRunnerCommand(input: {
   command: Record<string, unknown>;
   message: TelegramMessage;
   uploads: Array<Record<string, unknown>>;
+  replyContext: string | null;
 }): Promise<void> {
   const chatId = input.message.chat.id;
   const threadId = input.message.message_thread_id;
@@ -304,13 +353,15 @@ async function handleRunnerCommand(input: {
     prompt: String(input.command.prompt || ''),
     message: input.message,
     immediateUploads: input.uploads,
+    replyContext: input.replyContext,
   });
 }
 
 async function handleCommand(message: TelegramMessage, uploads: Array<Record<string, unknown>>): Promise<void> {
   const chatId = message.chat.id;
   const threadId = message.message_thread_id;
-  const text = sanitizeText(message.text || message.caption || '');
+  const text = messageBodyText(message);
+  const replyContext = replyContextText(message);
   const command = parseCommand(text);
   const sessionBefore = sessionStore.getSession(chatId);
 
@@ -437,6 +488,7 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
       command,
       message,
       uploads,
+      replyContext,
     });
     return;
   }
@@ -462,7 +514,9 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     chatTitle: message.chat.title || null,
     fromId: message.from.id,
     fromUsername: message.from.username || null,
-    text: previewText(message.text || message.caption),
+    text: previewText(messageBodyText(message)),
+    replyToMessageId: message.reply_to_message?.message_id || null,
+    replyToText: previewText(messageBodyText(message.reply_to_message as TelegramMessage)),
     hasPhoto: Array.isArray(message.photo) && message.photo.length > 0,
     hasDocument: Boolean(message.document),
     hasVideo: Boolean(message.video),

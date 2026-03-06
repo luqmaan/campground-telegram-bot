@@ -4,6 +4,7 @@ const { startRunnerTask } = require('./runner-common.ts');
 
 function startClaudeTask(input: {
   prompt: string;
+  replyContext?: string | null;
   uploads: Array<Record<string, unknown>>;
   historyContext: string;
   statusContext: string;
@@ -21,6 +22,9 @@ function startClaudeTask(input: {
     '',
     'Recent chat history:',
     input.historyContext || 'None.',
+    '',
+    'Reply context:',
+    input.replyContext || 'None.',
     '',
     'Attached local files:',
     uploadsPromptBlock(input.uploads, config.ROOT_DIR),
