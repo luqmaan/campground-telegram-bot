@@ -48,12 +48,17 @@ function startClaudeTask(input: {
       command: 'claude',
       args: [
         '-p',
+        '--verbose',
+        '--output-format',
+        'stream-json',
+        '--include-partial-messages',
         '--model',
         config.CLAUDE_MODEL,
         '--dangerously-skip-permissions',
         '--no-session-persistence',
         '--disable-slash-commands',
       ],
+      streamFormat: 'claude-stream-json',
     }),
   });
 }

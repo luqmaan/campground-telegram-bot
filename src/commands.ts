@@ -329,7 +329,7 @@ function runnerStartedMessage(activeTask: Record<string, unknown>): string {
   if (activeTask.uploadCount) {
     lines.push(`Uploads: ${activeTask.uploadCount}`);
   }
-  lines.push('I will stream live progress as terminal output, status, or files change.');
+  lines.push('I will stream live tool activity, partial reply text, status, and file changes when available.');
   lines.push('Send /status at any time for the full live task details.');
   if (Array.isArray(activeTask.warnings) && activeTask.warnings.length > 0) {
     lines.push(`Warnings: ${activeTask.warnings.join(' | ')}`);

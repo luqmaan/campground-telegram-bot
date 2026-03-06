@@ -10,6 +10,7 @@ const {
   makeId,
   nowIso,
   previewText,
+  relativeDisplayPath,
   sanitizeText,
   slugify,
   stripAnsi,
@@ -166,6 +167,69 @@ function listChangedFiles(cwd: string): string[] {
 
 function summarizeCommand(command: string, args: string[]): string {
   return previewText([command, ...args].join(' '), 220) || command;
+}
+
+function summarizeShellCommand(commandText: unknown): string {
+  const raw = String(commandText || '').trim();
+  if (!raw) return 'command';
+  const segments = raw
+    .split(/&&|;/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const candidate = (segments[segments.length - 1] || raw).replace(/\s+/g, ' ').trim();
+  const tokens = candidate.split(' ').filter(Boolean);
+  const summary: string[] = [];
+
+  for (const token of tokens) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+    if (summary.length === 0 && ['env', 'nice', 'ionice', 'timeout', 'bash', 'sh', 'zsh', 'sudo'].includes(token)) {
+      continue;
+    }
+    if (summary.length === 0 && ['-lc', '-c', '--'].includes(token)) continue;
+    summary.push(token);
+    if (summary.length >= 3) break;
+  }
+
+  return summary.join(' ') || previewText(candidate, 80) || 'command';
+}
+
+function summarizeClaudeToolUse(toolName: string, input: Record<string, unknown>, cwd: string): string | null {
+  const name = sanitizeText(toolName);
+  if (!name) return null;
+
+  const filePath =
+    input.file_path ||
+    input.filePath ||
+    input.path ||
+    input.notebook_path ||
+    input.notebookPath ||
+    input.target_file;
+
+  if (name === 'Bash') {
+    return `Tool: Bash ${summarizeShellCommand(input.command || input.cmd)}`;
+  }
+  if ((name === 'Read' || name === 'Write' || name === 'Edit' || name === 'NotebookEdit') && filePath) {
+    return `Tool: ${name} ${relativeDisplayPath(String(filePath), cwd)}`;
+  }
+  if (name === 'Glob' && input.pattern) {
+    return `Tool: Glob ${previewText(input.pattern, 120)}`;
+  }
+  if (name === 'Grep' && input.pattern) {
+    return `Tool: Grep ${previewText(input.pattern, 120)}`;
+  }
+  if (name === 'WebFetch' && input.url) {
+    return `Tool: WebFetch ${previewText(input.url, 120)}`;
+  }
+  if (name === 'WebSearch' && input.query) {
+    return `Tool: WebSearch ${previewText(input.query, 120)}`;
+  }
+  if (name === 'ToolSearch' && input.query) {
+    return `Tool: ToolSearch ${previewText(input.query, 120)}`;
+  }
+  if (filePath) {
+    return `Tool: ${name} ${relativeDisplayPath(String(filePath), cwd)}`;
+  }
+  return `Tool: ${name}`;
 }
 
 function changedFilesSince(cwd: string, baseline: string[]): string[] {
@@ -391,10 +455,90 @@ function startRunnerTask(options: {
   let lastProgressSentAt = 0;
   let lastChangeAt = Date.now();
   let progressEventId = 0;
+  let parsedFinalOutput: string | null = null;
+  let stdoutJsonBuffer = '';
+  let textBlockOpen = false;
+  const seenClaudeToolUses = new Set<string>();
+
+  const appendStdoutText = (text: string, options: { newline?: boolean } = {}): void => {
+    const compactText = String(text || '');
+    if (!compactText) return;
+    const chunk = options.newline ? `${compactText}\n` : compactText;
+    stdout = appendCapped(stdout, chunk);
+    lastChangeAt = Date.now();
+  };
+
+  const flushClaudeJsonLine = (line: string): void => {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line);
+      lastChangeAt = Date.now();
+    } catch {
+      return;
+    }
+
+    if (event.type === 'result' && typeof event.result === 'string') {
+      parsedFinalOutput = String(event.result);
+      return;
+    }
+
+    if (event.type === 'stream_event') {
+      const streamEvent = (event.event || {}) as Record<string, unknown>;
+      const delta = (streamEvent.delta || {}) as Record<string, unknown>;
+      if (streamEvent.type === 'content_block_start') {
+        const block = (streamEvent.content_block || {}) as Record<string, unknown>;
+        if (block.type === 'text') {
+          textBlockOpen = true;
+        }
+        return;
+      }
+      if (streamEvent.type === 'content_block_delta' && delta.type === 'text_delta' && typeof delta.text === 'string') {
+        textBlockOpen = true;
+        appendStdoutText(String(delta.text));
+        return;
+      }
+      if ((streamEvent.type === 'content_block_stop' || streamEvent.type === 'message_stop') && textBlockOpen) {
+        appendStdoutText('', { newline: false });
+        stdout = appendCapped(stdout, '\n');
+        textBlockOpen = false;
+      }
+      return;
+    }
+
+    if (event.type === 'assistant') {
+      const message = (event.message || {}) as Record<string, unknown>;
+      const content = Array.isArray(message.content) ? message.content : [];
+      for (const blockRaw of content) {
+        const block = blockRaw as Record<string, unknown>;
+        if (block.type === 'tool_use') {
+          const toolUseId = sanitizeText(block.id || '');
+          if (toolUseId && seenClaudeToolUses.has(toolUseId)) continue;
+          if (toolUseId) seenClaudeToolUses.add(toolUseId);
+          const toolSummary = summarizeClaudeToolUse(String(block.name || ''), (block.input || {}) as Record<string, unknown>, String(workspace.cwd));
+          if (toolSummary) appendStdoutText(toolSummary, { newline: true });
+          continue;
+        }
+        if (block.type === 'text' && typeof block.text === 'string' && !textBlockOpen) {
+          appendStdoutText(String(block.text), { newline: true });
+        }
+      }
+    }
+  };
 
   child.stdout.on('data', (chunk: Buffer) => {
-    stdout = appendCapped(stdout, chunk.toString());
-    lastChangeAt = Date.now();
+    const text = chunk.toString();
+    if (commandSpec.streamFormat === 'claude-stream-json') {
+      stdoutJsonBuffer = `${stdoutJsonBuffer}${text}`;
+      let newlineIndex = stdoutJsonBuffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = stdoutJsonBuffer.slice(0, newlineIndex).trim();
+        stdoutJsonBuffer = stdoutJsonBuffer.slice(newlineIndex + 1);
+        if (line) flushClaudeJsonLine(line);
+        newlineIndex = stdoutJsonBuffer.indexOf('\n');
+      }
+      return;
+    }
+    appendStdoutText(text);
   });
   child.stderr.on('data', (chunk: Buffer) => {
     stderr = appendCapped(stderr, chunk.toString());
@@ -478,6 +622,10 @@ function startRunnerTask(options: {
 
       const stdoutClean = stripAnsi(stdout).trim();
       const stderrClean = stripAnsi(stderr).trim();
+      if (commandSpec.streamFormat === 'claude-stream-json' && stdoutJsonBuffer.trim()) {
+        flushClaudeJsonLine(stdoutJsonBuffer.trim());
+        stdoutJsonBuffer = '';
+      }
       const finalTaskStatus = readTaskStatus(String(workspace.cwd));
       const warnings = [...(Array.isArray(workspace.warnings) ? workspace.warnings : []), ...extraWarnings];
       let commitSha: string | null = null;
@@ -513,8 +661,18 @@ function startRunnerTask(options: {
         id: taskId,
         runner: options.runner,
         status,
-        summary: buildSummary(status, stdoutClean, stderrClean, finalTaskStatus, Date.now() - startedAt),
-        finalOutput: stdoutClean ? tailText(stdoutClean, config.RUNNER_FINAL_MESSAGE_CHARS) : null,
+        summary: buildSummary(
+          status,
+          parsedFinalOutput ? stripAnsi(parsedFinalOutput).trim() : stdoutClean,
+          stderrClean,
+          finalTaskStatus,
+          Date.now() - startedAt
+        ),
+        finalOutput: parsedFinalOutput
+          ? tailText(stripAnsi(parsedFinalOutput).trim(), config.RUNNER_FINAL_MESSAGE_CHARS)
+          : stdoutClean
+            ? tailText(stdoutClean, config.RUNNER_FINAL_MESSAGE_CHARS)
+            : null,
         startedAt: startedAtIso,
         finishedAt: nowIso(),
         durationMs: Date.now() - startedAt,
