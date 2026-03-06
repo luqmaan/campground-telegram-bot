@@ -41,6 +41,13 @@ type ActiveTask = {
   status: 'running';
   uploadCount: number;
   branchName: string | null;
+  worktreePath?: string | null;
+  commandSummary?: string | null;
+  lastProgressAt?: string | null;
+  changedFiles?: string[];
+  changedFileCount?: number;
+  stdoutTail?: string | null;
+  stderrTail?: string | null;
   warnings: string[];
 };
 
@@ -195,6 +202,23 @@ class SessionStore {
   setTaskPid(chatId: string | number, pid: number | null): SessionState {
     return this.updateSession(chatId, (session) => {
       if (session.activeTask) session.activeTask.pid = pid;
+      return session;
+    });
+  }
+
+  setTaskProgress(chatId: string | number, progress: Record<string, unknown>): SessionState {
+    return this.updateSession(chatId, (session) => {
+      if (!session.activeTask) return session;
+      session.activeTask.lastProgressAt = nowIso();
+      session.activeTask.changedFiles = Array.isArray(progress.changedFiles)
+        ? progress.changedFiles.map((value) => String(value))
+        : [];
+      session.activeTask.changedFileCount = Number(progress.changedFileCount) || session.activeTask.changedFiles.length || 0;
+      session.activeTask.stdoutTail = progress.stdoutTail ? String(progress.stdoutTail) : null;
+      session.activeTask.stderrTail = progress.stderrTail ? String(progress.stderrTail) : null;
+      if (progress.branchName) session.activeTask.branchName = String(progress.branchName);
+      if (progress.worktreePath !== undefined) session.activeTask.worktreePath = progress.worktreePath ? String(progress.worktreePath) : null;
+      if (progress.commandSummary) session.activeTask.commandSummary = String(progress.commandSummary);
       return session;
     });
   }

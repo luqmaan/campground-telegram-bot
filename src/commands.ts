@@ -142,6 +142,33 @@ function statusMessage(input: {
 
   if (session.activeTask) {
     lines.push(`Active agent task: ${session.activeTask.runner} since ${session.activeTask.startedAt}`);
+    if (session.activeTask.branchName) {
+      lines.push(`Agent branch: ${session.activeTask.branchName}`);
+    }
+    if (session.activeTask.worktreePath) {
+      lines.push(`Agent worktree: ${relativeDisplayPath(String(session.activeTask.worktreePath), config.ROOT_DIR)}`);
+    }
+    if (session.activeTask.commandSummary) {
+      lines.push(`Agent command: ${session.activeTask.commandSummary}`);
+    }
+    if (Array.isArray(session.activeTask.changedFiles) && session.activeTask.changedFiles.length > 0) {
+      lines.push(
+        `Agent changed files: ${session.activeTask.changedFiles.join(', ')}${
+          session.activeTask.changedFileCount > session.activeTask.changedFiles.length
+            ? ` (+${session.activeTask.changedFileCount - session.activeTask.changedFiles.length} more)`
+            : ''
+        }`
+      );
+    } else {
+      lines.push('Agent changed files: none yet');
+    }
+    if (session.activeTask.stdoutTail) {
+      lines.push(`Agent stdout: ${previewText(session.activeTask.stdoutTail, 180)}`);
+    } else if (session.activeTask.stderrTail) {
+      lines.push(`Agent stderr: ${previewText(session.activeTask.stderrTail, 180)}`);
+    } else if (session.activeTask.lastProgressAt) {
+      lines.push(`Agent output: none visible as of ${session.activeTask.lastProgressAt}`);
+    }
   } else {
     lines.push('Active agent task: none');
   }
@@ -225,9 +252,19 @@ function runnerStartedMessage(activeTask: Record<string, unknown>): string {
     `Starting ${String(activeTask.runner)}.`,
     `Task: ${previewText(activeTask.promptPreview, 140) || 'no prompt preview'}`,
   ];
+  if (activeTask.branchName) {
+    lines.push(`Branch: ${activeTask.branchName}`);
+  }
+  if (activeTask.worktreePath) {
+    lines.push(`Worktree: ${relativeDisplayPath(String(activeTask.worktreePath), config.ROOT_DIR)}`);
+  }
+  if (activeTask.commandSummary) {
+    lines.push(`Command: ${activeTask.commandSummary}`);
+  }
   if (activeTask.uploadCount) {
     lines.push(`Uploads: ${activeTask.uploadCount}`);
   }
+  lines.push('Waiting for the first output or file change.');
   if (Array.isArray(activeTask.warnings) && activeTask.warnings.length > 0) {
     lines.push(`Warnings: ${activeTask.warnings.join(' | ')}`);
   }
@@ -271,10 +308,44 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
   const lines = [
     `${String(progress.runner)} still running after ${formatDuration(Number(progress.elapsedMs) || 0)}.`,
   ];
+
+  if (progress.branchName) {
+    lines.push(`Branch: ${progress.branchName}`);
+  }
+  if (progress.worktreePath) {
+    lines.push(`Worktree: ${relativeDisplayPath(String(progress.worktreePath), config.ROOT_DIR)}`);
+  }
+  if (progress.commandSummary) {
+    lines.push(`Command: ${progress.commandSummary}`);
+  }
+
+  if (Array.isArray(progress.changedFiles) && progress.changedFiles.length > 0) {
+    lines.push(
+      `Changed files: ${progress.changedFiles.join(', ')}${
+        Number(progress.changedFileCount) > progress.changedFiles.length
+          ? ` (+${Number(progress.changedFileCount) - progress.changedFiles.length} more)`
+          : ''
+      }`
+    );
+  } else {
+    lines.push('Changed files: none yet');
+  }
+
   if (progress.stdoutTail) {
     lines.push(`stdout: ${previewText(progress.stdoutTail, 220)}`);
   } else if (progress.stderrTail) {
     lines.push(`stderr: ${previewText(progress.stderrTail, 220)}`);
+  } else {
+    lines.push('Output: none visible yet');
+  }
+
+  if ((!progress.stdoutTail && !progress.stderrTail) && (!Array.isArray(progress.changedFiles) || progress.changedFiles.length === 0)) {
+    const elapsedMs = Number(progress.elapsedMs) || 0;
+    if (elapsedMs >= 90_000) {
+      lines.push('Status: no visible activity yet; the runner may still be planning or may be stalled.');
+    } else {
+      lines.push('Status: waiting for the first visible step.');
+    }
   }
   return lines.join('\n');
 }

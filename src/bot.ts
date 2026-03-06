@@ -237,6 +237,7 @@ async function startRunnerForMessage(input: {
     statusContext: currentStatusMessage(chatId),
     senderName: sender,
     onProgress: async (progress: Record<string, unknown>) => {
+      sessionStore.setTaskProgress(chatId, progress);
       await sendTelegram(chatId, runnerProgressMessage(progress), { threadId: input.threadId });
     },
   });

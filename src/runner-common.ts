@@ -156,6 +156,17 @@ function listChangedFiles(cwd: string): string[] {
     .filter(Boolean);
 }
 
+function summarizeCommand(command: string, args: string[]): string {
+  return previewText([command, ...args].join(' '), 220) || command;
+}
+
+function changedFilesSince(cwd: string, baseline: string[]): string[] {
+  const current = listChangedFiles(cwd);
+  if (!baseline.length) return current;
+  const baselineSet = new Set(baseline);
+  return current.filter((file) => !baselineSet.has(file));
+}
+
 function commitChanges(cwd: string, runner: RunnerName, slug: string): { commitSha: string | null; changedFiles: string[] } {
   runCommand('git', ['add', '-A'], cwd);
   const stagedFiles = tryRunCommand('git', ['diff', '--cached', '--name-only'], cwd);
@@ -239,6 +250,9 @@ function startRunnerTask(options: {
     };
   }
 
+  const commandSummary = summarizeCommand(String(commandSpec.command), Array.isArray(commandSpec.args) ? commandSpec.args.map(String) : []);
+  const baselineChangedFiles = changedFilesSince(String(workspace.cwd), []);
+
   let child;
   try {
     child = spawn(config.AGENT_WRAPPER_PATH, [String(commandSpec.command), ...commandSpec.args.map(String)], {
@@ -310,10 +324,17 @@ function startRunnerTask(options: {
         taskId,
         elapsedMs: Date.now() - startedAt,
         pid: child.pid || null,
+        branchName: workspace.branchName ? String(workspace.branchName) : null,
+        worktreePath: workspace.worktreePath ? String(workspace.worktreePath) : null,
+        commandSummary,
+        changedFiles: changedFilesSince(String(workspace.cwd), baselineChangedFiles).slice(0, 6),
+        changedFileCount: changedFilesSince(String(workspace.cwd), baselineChangedFiles).length,
         stdoutTail: tailText(stripAnsi(stdout), 500),
         stderrTail: tailText(stripAnsi(stderr), 500),
       };
-      const signature = `${progress.stdoutTail}|${progress.stderrTail}|${Math.floor(Number(progress.elapsedMs) / 1000)}`;
+      const signature = `${progress.stdoutTail}|${progress.stderrTail}|${progress.changedFiles.join(',')}|${progress.changedFileCount}|${Math.floor(
+        Number(progress.elapsedMs) / 1000
+      )}`;
       if (signature === lastProgressSignature) return;
       lastProgressSignature = signature;
       void Promise.resolve(options.onProgress?.(progress)).catch(() => {});
@@ -415,6 +436,13 @@ function startRunnerTask(options: {
       status: 'running',
       uploadCount: options.uploads.length,
       branchName: workspace.branchName ? String(workspace.branchName) : null,
+      worktreePath: workspace.worktreePath ? String(workspace.worktreePath) : null,
+      commandSummary,
+      lastProgressAt: null,
+      changedFiles: [],
+      changedFileCount: 0,
+      stdoutTail: null,
+      stderrTail: null,
       warnings: Array.isArray(workspace.warnings) ? workspace.warnings : [],
     },
     cancel: () => {

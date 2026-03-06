@@ -96,8 +96,9 @@ function safeFileName(value: string, fallback = 'file'): string {
 
 function relativeDisplayPath(filePath: string, rootDir: string): string {
   if (!filePath) return filePath;
-  if (filePath.startsWith(rootDir)) {
-    return path.relative(rootDir, filePath) || '.';
+  if (path.isAbsolute(filePath)) {
+    const relative = path.relative(rootDir, filePath) || '.';
+    return relative;
   }
   return filePath;
 }
