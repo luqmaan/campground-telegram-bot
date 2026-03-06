@@ -383,11 +383,14 @@ function runnerStartedMessage(activeTask: Record<string, unknown>): string {
     lines.push(`Uploads: ${activeTask.uploadCount}`);
   }
   lines.push('I will stream live tool activity, partial reply text, status, and file changes when available.');
-  lines.push('Send /status at any time for the full live task details.');
   if (Array.isArray(activeTask.warnings) && activeTask.warnings.length > 0) {
     lines.push(`Warnings: ${activeTask.warnings.join(' | ')}`);
   }
   return lines.join('\n');
+}
+
+function escapeHtml(text: unknown): string {
+  return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function runnerCardMessage(input: Record<string, unknown>): string {
@@ -401,72 +404,73 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   const stderrChunk = input.stderrChunk ? String(input.stderrChunk).trim() : '';
   const stderrTail = input.stderrTail ? String(input.stderrTail).trim() : '';
   const statusBits = [
-    input.statusStage ? `${stageEmoji(input.statusStage)} Stage: ${input.statusStage}` : null,
-    input.statusSummary ? `📝 Summary: ${previewText(input.statusSummary, 220)}` : null,
-    input.statusHypothesis ? `💭 Hypothesis: ${previewText(input.statusHypothesis, 220)}` : null,
-    input.statusEvidence ? `🔎 Evidence: ${previewText(input.statusEvidence, 220)}` : null,
-    input.statusDecision ? `⚖️ Decision: ${previewText(input.statusDecision, 220)}` : null,
-    input.statusNextStep ? `➡️ Next: ${previewText(input.statusNextStep, 220)}` : null,
+    input.statusStage ? `${stageEmoji(input.statusStage)} <b>Stage:</b> ${escapeHtml(input.statusStage)}` : null,
+    input.statusSummary ? `📝 <b>Summary:</b> ${escapeHtml(previewText(input.statusSummary, 220))}` : null,
+    input.statusHypothesis ? `💭 <b>Hypothesis:</b> ${escapeHtml(previewText(input.statusHypothesis, 220))}` : null,
+    input.statusEvidence ? `🔎 <b>Evidence:</b> ${escapeHtml(previewText(input.statusEvidence, 220))}` : null,
+    input.statusDecision ? `⚖️ <b>Decision:</b> ${escapeHtml(previewText(input.statusDecision, 220))}` : null,
+    input.statusNextStep ? `➡️ <b>Next:</b> ${escapeHtml(previewText(input.statusNextStep, 220))}` : null,
   ].filter(Boolean);
 
-  const lines = [
-    `${runnerStatusEmoji(status)} ${runner} ${status === 'running' ? 'running' : status} ${
-      status === 'running' ? `for ${formatDuration(Number(input.elapsedMs) || 0)}` : `in ${formatDuration(Number(input.durationMs) || 0)}`
-    }.`,
-    `Task: ${promptPreview}`,
-  ];
+  const sections: string[][] = [];
 
+  const header = [
+    `${runnerStatusEmoji(status)} <b>${runner} ${status === 'running' ? 'running' : status} ${
+      status === 'running' ? `for ${formatDuration(Number(input.elapsedMs) || 0)}` : `in ${formatDuration(Number(input.durationMs) || 0)}`
+    }</b>`,
+    `<b>Task:</b> ${escapeHtml(promptPreview)}`,
+  ];
   if (status === 'running' && Boolean(input.heartbeat)) {
-    lines.push(`No new visible activity for ${formatDuration(Number(input.idleMs) || 0)}.`);
+    header.push(`No new visible activity for ${formatDuration(Number(input.idleMs) || 0)}.`);
+  }
+  sections.push(header);
+
+  if (statusBits.length > 0) {
+    sections.push(statusBits as string[]);
   }
 
-  lines.push(...statusBits);
-
   if (changedFiles.length > 0) {
-    lines.push(
-      `Changed files: ${changedFiles.join(', ')}${
+    sections.push([
+      `<b>Changed files:</b> ${escapeHtml(changedFiles.join(', '))}${
         Number(input.changedFileCount) > changedFiles.length ? ` (+${Number(input.changedFileCount) - changedFiles.length} more)` : ''
-      }`
-    );
+      }`,
+    ]);
   }
 
   const outputPreview = previewLastLines(stdoutTail || stdoutChunk, 8, 700) || previewLastLines(stdoutChunk, 8, 700);
   const stderrPreview = previewLastLines(stderrTail || stderrChunk, 6, 600) || previewLastLines(stderrChunk, 6, 600);
   if (outputPreview) {
-    lines.push('📤 Output:');
-    lines.push(outputPreview);
+    sections.push([`📤 <b>Output:</b>`, escapeHtml(outputPreview)]);
   } else if (stderrPreview) {
-    lines.push('⚠️ stderr:');
-    lines.push(stderrPreview);
+    sections.push([`⚠️ <b>stderr:</b>`, escapeHtml(stderrPreview)]);
   }
 
   if (status !== 'running' && input.finalOutput) {
     const finalOutputPreview = previewLastLines(input.finalOutput, 10, 900) || previewText(input.finalOutput, 900);
     if (finalOutputPreview) {
-      lines.push('💬 Result:');
-      lines.push(finalOutputPreview);
+      sections.push([`💬 <b>Result:</b>`, escapeHtml(finalOutputPreview)]);
     }
   }
 
+  const meta: string[] = [];
   if (status !== 'running' && input.summary) {
-    lines.push(`📝 Summary: ${previewText(input.summary, 260)}`);
+    meta.push(`📝 <b>Summary:</b> ${escapeHtml(previewText(input.summary, 260))}`);
   }
-
   if (status !== 'running' && input.commitSha) {
-    lines.push(`Commit: ${input.commitSha}`);
+    meta.push(`Commit: <code>${escapeHtml(String(input.commitSha))}</code>`);
   }
-
   if (status !== 'running' && postActions.length > 0) {
-    lines.push('📌 Actions:');
-    lines.push(...postActions.map((line) => `- ${line}`));
+    meta.push('<b>📌 Actions:</b>');
+    meta.push(...postActions.map((line) => `- ${escapeHtml(line)}`));
   }
-
   if (status !== 'running' && Array.isArray(input.warnings) && input.warnings.length > 0) {
-    lines.push(`⚠️ Warnings: ${input.warnings.join(' | ')}`);
+    meta.push(`⚠️ <b>Warnings:</b> ${escapeHtml(input.warnings.join(' | '))}`);
+  }
+  if (meta.length > 0) {
+    sections.push(meta);
   }
 
-  lines.push(status === 'running' ? 'Use the buttons below or /status for details.' : 'Use the buttons below or /logs runner for details.');
-  return lines.join('\n');
+  return sections.map((s) => s.join('\n')).join('\n\n');
 }
 
 function manualRunStartedMessage(scope: Record<string, unknown>): string {
@@ -534,7 +538,6 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
   } else if (stderrChunk) {
     lines.push('', '⚠️ stderr:', stderrChunk);
   }
-  lines.push('Send /status for the full live task details.');
   return lines.join('\n');
 }
 

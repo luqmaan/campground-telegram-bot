@@ -341,6 +341,7 @@ async function upsertRunnerTaskCard(input: {
   if (input.activeTask.cardMessageId) {
     await editTelegramSingle(input.chatId, Number(input.activeTask.cardMessageId), text, {
       replyMarkup: runnerTaskKeyboard(!input.result),
+      html: true,
     });
     return;
   }
@@ -348,6 +349,7 @@ async function upsertRunnerTaskCard(input: {
   const sent = await sendTelegramSingle(input.chatId, text, {
     threadId: input.threadId,
     replyMarkup: runnerTaskKeyboard(true),
+    html: true,
   });
   sessionStore.setTaskCard(input.chatId, String(input.activeTask.id), {
     messageId: Number(sent.message_id) || null,
@@ -609,6 +611,7 @@ async function reconcileInterruptedTaskCards(
       if (repaired.cardMessageId) {
         await editTelegramSingle(repaired.chatId, repaired.cardMessageId, text, {
           replyMarkup: runnerTaskKeyboard(false),
+          html: true,
         });
       } else {
         await sendTelegram(repaired.chatId, runnerResultMessage(repaired.result, config.ROOT_DIR), {
