@@ -47,6 +47,8 @@ type TaskResult = {
   keptWorktreePath: string | null;
   lastKnownStage: string | null;
   lastKnownSummary: string | null;
+  lastKnownHypothesis: string | null;
+  lastKnownEvidence: string | null;
   lastKnownDecision: string | null;
   lastKnownNextStep: string | null;
   warnings: string[];
@@ -56,6 +58,8 @@ const TASK_STATUS_FILE_NAME = '.campground-runner-status.json';
 type TaskStatusSnapshot = {
   stage: string;
   summary: string;
+  hypothesis: string;
+  evidence: string;
   decision: string;
   nextStep: string;
   updatedAt: string;
@@ -252,6 +256,8 @@ function readTaskStatus(cwd: string): TaskStatusSnapshot | null {
     return {
       stage: sanitizeText(raw.stage || ''),
       summary: sanitizeText(raw.summary || ''),
+      hypothesis: sanitizeText(raw.hypothesis || ''),
+      evidence: sanitizeText(raw.evidence || ''),
       decision: sanitizeText(raw.decision || ''),
       nextStep: sanitizeText(raw.next_step || raw.nextStep || ''),
       updatedAt: sanitizeText(raw.updated_at || raw.updatedAt || ''),
@@ -278,6 +284,8 @@ function formatTaskStatusSummary(taskStatus: TaskStatusSnapshot | null): string 
   const parts = [
     taskStatus.stage ? `Last stage: ${taskStatus.stage}.` : '',
     taskStatus.summary ? `Last summary: ${taskStatus.summary}.` : '',
+    taskStatus.hypothesis ? `Last hypothesis: ${taskStatus.hypothesis}.` : '',
+    taskStatus.evidence ? `Last evidence: ${taskStatus.evidence}.` : '',
     taskStatus.decision ? `Last decision: ${taskStatus.decision}.` : '',
     taskStatus.nextStep ? `Last next step: ${taskStatus.nextStep}.` : '',
   ].filter(Boolean);
@@ -376,6 +384,8 @@ function startRunnerTask(options: {
         keptWorktreePath: null,
         lastKnownStage: null,
         lastKnownSummary: null,
+        lastKnownHypothesis: null,
+        lastKnownEvidence: null,
         lastKnownDecision: null,
         lastKnownNextStep: null,
         warnings,
@@ -436,6 +446,8 @@ function startRunnerTask(options: {
         keptWorktreePath: null,
         lastKnownStage: null,
         lastKnownSummary: null,
+        lastKnownHypothesis: null,
+        lastKnownEvidence: null,
         lastKnownDecision: null,
         lastKnownNextStep: null,
         warnings,
@@ -603,6 +615,8 @@ function startRunnerTask(options: {
         stderrTail: tailText(stripAnsi(stderr), 500),
         statusStage: taskStatus?.stage || null,
         statusSummary: taskStatus?.summary || null,
+        statusHypothesis: taskStatus?.hypothesis || null,
+        statusEvidence: taskStatus?.evidence || null,
         statusDecision: taskStatus?.decision || null,
         statusNextStep: taskStatus?.nextStep || null,
       };
@@ -684,6 +698,8 @@ function startRunnerTask(options: {
         keptWorktreePath,
         lastKnownStage: finalTaskStatus?.stage || null,
         lastKnownSummary: finalTaskStatus?.summary || null,
+        lastKnownHypothesis: finalTaskStatus?.hypothesis || null,
+        lastKnownEvidence: finalTaskStatus?.evidence || null,
         lastKnownDecision: finalTaskStatus?.decision || null,
         lastKnownNextStep: finalTaskStatus?.nextStep || null,
         warnings,
@@ -735,6 +751,8 @@ function startRunnerTask(options: {
       stderrTail: null,
       statusStage: null,
       statusSummary: null,
+      statusHypothesis: null,
+      statusEvidence: null,
       statusDecision: null,
       statusNextStep: null,
       warnings: Array.isArray(workspace.warnings) ? workspace.warnings : [],

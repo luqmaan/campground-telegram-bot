@@ -148,6 +148,12 @@ function statusMessage(input: {
     if (session.activeTask.statusSummary) {
       lines.push(`Agent summary: ${session.activeTask.statusSummary}`);
     }
+    if (session.activeTask.statusHypothesis) {
+      lines.push(`Agent hypothesis: ${session.activeTask.statusHypothesis}`);
+    }
+    if (session.activeTask.statusEvidence) {
+      lines.push(`Agent evidence: ${session.activeTask.statusEvidence}`);
+    }
     if (session.activeTask.statusDecision) {
       lines.push(`Agent decision: ${session.activeTask.statusDecision}`);
     }
@@ -206,6 +212,12 @@ function statusMessage(input: {
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownSummary) {
       lines.push(`Last summary: ${previewText(session.lastResult.lastKnownSummary, 180)}`);
     }
+    if (!session.lastResult.finalOutput && session.lastResult.lastKnownHypothesis) {
+      lines.push(`Last hypothesis: ${previewText(session.lastResult.lastKnownHypothesis, 180)}`);
+    }
+    if (!session.lastResult.finalOutput && session.lastResult.lastKnownEvidence) {
+      lines.push(`Last evidence: ${previewText(session.lastResult.lastKnownEvidence, 180)}`);
+    }
   }
 
   if (Array.isArray(monitorStatus.runs) && monitorStatus.runs.length > 0) {
@@ -250,6 +262,12 @@ function logsMessage(input: {
       if (activeTask.statusSummary) {
         lines.push(`Summary: ${previewText(activeTask.statusSummary, 220)}`);
       }
+      if (activeTask.statusHypothesis) {
+        lines.push(`Hypothesis: ${previewText(activeTask.statusHypothesis, 220)}`);
+      }
+      if (activeTask.statusEvidence) {
+        lines.push(`Evidence: ${previewText(activeTask.statusEvidence, 220)}`);
+      }
       if (activeTask.statusDecision) {
         lines.push(`Decision: ${previewText(activeTask.statusDecision, 220)}`);
       }
@@ -290,6 +308,12 @@ function logsMessage(input: {
       }
       if (result.lastKnownSummary) {
         lines.push(`Last summary: ${previewText(result.lastKnownSummary, 220)}`);
+      }
+      if (result.lastKnownHypothesis) {
+        lines.push(`Last hypothesis: ${previewText(result.lastKnownHypothesis, 220)}`);
+      }
+      if (result.lastKnownEvidence) {
+        lines.push(`Last evidence: ${previewText(result.lastKnownEvidence, 220)}`);
       }
       if (result.lastKnownDecision) {
         lines.push(`Last decision: ${previewText(result.lastKnownDecision, 220)}`);
@@ -347,6 +371,8 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   const statusBits = [
     input.statusStage ? `Stage: ${input.statusStage}` : null,
     input.statusSummary ? `Summary: ${previewText(input.statusSummary, 220)}` : null,
+    input.statusHypothesis ? `Hypothesis: ${previewText(input.statusHypothesis, 220)}` : null,
+    input.statusEvidence ? `Evidence: ${previewText(input.statusEvidence, 220)}` : null,
     input.statusDecision ? `Decision: ${previewText(input.statusDecision, 220)}` : null,
     input.statusNextStep ? `Next: ${previewText(input.statusNextStep, 220)}` : null,
   ].filter(Boolean);
@@ -435,6 +461,8 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
   const statusBits = [
     progress.statusStage ? `Stage: ${progress.statusStage}` : null,
     progress.statusSummary ? `Summary: ${previewText(progress.statusSummary, 220)}` : null,
+    progress.statusHypothesis ? `Hypothesis: ${previewText(progress.statusHypothesis, 220)}` : null,
+    progress.statusEvidence ? `Evidence: ${previewText(progress.statusEvidence, 220)}` : null,
     progress.statusDecision ? `Decision: ${previewText(progress.statusDecision, 220)}` : null,
     progress.statusNextStep ? `Next: ${previewText(progress.statusNextStep, 220)}` : null,
   ].filter(Boolean);
@@ -474,6 +502,8 @@ function runnerResultMessage(result: Record<string, unknown>, rootDir: string): 
 
   if (!result.finalOutput && result.lastKnownStage) lines.push(`Last stage: ${result.lastKnownStage}`);
   if (!result.finalOutput && result.lastKnownSummary) lines.push(`Last summary: ${result.lastKnownSummary}`);
+  if (!result.finalOutput && result.lastKnownHypothesis) lines.push(`Last hypothesis: ${result.lastKnownHypothesis}`);
+  if (!result.finalOutput && result.lastKnownEvidence) lines.push(`Last evidence: ${result.lastKnownEvidence}`);
   if (!result.finalOutput && result.lastKnownDecision) lines.push(`Last decision: ${result.lastKnownDecision}`);
   if (!result.finalOutput && result.lastKnownNextStep) lines.push(`Last next step: ${result.lastKnownNextStep}`);
 

@@ -290,6 +290,8 @@ async function upsertRunnerTaskCard(input: {
     idleMs: input.progress?.idleMs || 0,
     statusStage: input.result?.lastKnownStage || input.activeTask.statusStage || input.progress?.statusStage || null,
     statusSummary: input.result?.lastKnownSummary || input.activeTask.statusSummary || input.progress?.statusSummary || null,
+    statusHypothesis: input.result?.lastKnownHypothesis || input.activeTask.statusHypothesis || input.progress?.statusHypothesis || null,
+    statusEvidence: input.result?.lastKnownEvidence || input.activeTask.statusEvidence || input.progress?.statusEvidence || null,
     statusDecision: input.result?.lastKnownDecision || input.activeTask.statusDecision || input.progress?.statusDecision || null,
     statusNextStep: input.result?.lastKnownNextStep || input.activeTask.statusNextStep || input.progress?.statusNextStep || null,
     changedFiles: input.result?.changedFiles || input.activeTask.changedFiles || input.progress?.changedFiles || [],

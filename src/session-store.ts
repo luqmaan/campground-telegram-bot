@@ -50,6 +50,8 @@ type ActiveTask = {
   stderrTail?: string | null;
   statusStage?: string | null;
   statusSummary?: string | null;
+  statusHypothesis?: string | null;
+  statusEvidence?: string | null;
   statusDecision?: string | null;
   statusNextStep?: string | null;
   cardMessageId?: number | null;
@@ -74,6 +76,8 @@ type TaskResult = {
   keptWorktreePath: string | null;
   lastKnownStage: string | null;
   lastKnownSummary: string | null;
+  lastKnownHypothesis: string | null;
+  lastKnownEvidence: string | null;
   lastKnownDecision: string | null;
   lastKnownNextStep: string | null;
   warnings: string[];
@@ -231,6 +235,8 @@ class SessionStore {
       if (progress.commandSummary) session.activeTask.commandSummary = String(progress.commandSummary);
       session.activeTask.statusStage = progress.statusStage ? String(progress.statusStage) : null;
       session.activeTask.statusSummary = progress.statusSummary ? String(progress.statusSummary) : null;
+      session.activeTask.statusHypothesis = progress.statusHypothesis ? String(progress.statusHypothesis) : null;
+      session.activeTask.statusEvidence = progress.statusEvidence ? String(progress.statusEvidence) : null;
       session.activeTask.statusDecision = progress.statusDecision ? String(progress.statusDecision) : null;
       session.activeTask.statusNextStep = progress.statusNextStep ? String(progress.statusNextStep) : null;
       return session;
