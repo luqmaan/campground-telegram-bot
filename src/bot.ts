@@ -4,6 +4,8 @@ const { SessionStore, displayName, profileFromTelegramUser } = require('./sessio
 const {
   helpMessage,
   logsMessage,
+  manualRunProgressMessage,
+  manualRunStartedMessage,
   parseCommand,
   runnerProgressMessage,
   runnerResultMessage,
@@ -102,7 +104,30 @@ async function startManualRun(chatId: string | number, threadId: number | null |
     return;
   }
 
-  await sendTelegram(chatId, 'Starting a manual campsite check now.', { threadId });
+  const scope = monitor.scopeSummary();
+  let lastProgressMessage = '';
+  const sendManualProgress = async (): Promise<void> => {
+    const activeRun = monitor.getStatus().activeRun;
+    if (!activeRun || activeRun.mode !== 'manual') {
+      return;
+    }
+    const message = manualRunProgressMessage(activeRun);
+    if (message === lastProgressMessage) {
+      return;
+    }
+    lastProgressMessage = message;
+    try {
+      await sendTelegram(chatId, message, { threadId });
+    } catch (error) {
+      log('WARN', 'Failed to send manual progress update', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  await sendTelegram(chatId, manualRunStartedMessage(scope), { threadId });
+  const progressInterval = setInterval(() => {
+    void sendManualProgress();
+  }, 12000);
+
   manualRunPromise = monitor
     .runCheck('manual')
     .then(async (result: Record<string, unknown>) => {
@@ -116,6 +141,7 @@ async function startManualRun(chatId: string | number, threadId: number | null |
       await sendTelegram(chatId, `Manual run failed: ${error.message}`, { threadId });
     })
     .finally(() => {
+      clearInterval(progressInterval);
       manualRunPromise = null;
     });
 }

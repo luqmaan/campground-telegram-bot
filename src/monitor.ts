@@ -2,7 +2,7 @@ const fs = require('node:fs');
 
 const config = require('./config.ts');
 const { DATE_RANGES, TARGETS } = require('./monitor-config.ts');
-const { nowIso, readJson, sleep, writeJson } = require('./utils.ts');
+const { formatDuration, nowIso, readJson, sleep, writeJson } = require('./utils.ts');
 
 const RDR_BASE = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
 
@@ -89,6 +89,42 @@ class CampgroundMonitor {
     state.alerted = alerted;
   }
 
+  scopeSummary(): Record<string, unknown> {
+    return {
+      targetCount: TARGETS.length,
+      rangeCount: DATE_RANGES.length,
+      totalChecks: TARGETS.length * DATE_RANGES.length,
+    };
+  }
+
+  activeRunSummary(): string {
+    const state = this.loadState();
+    const activeRun = state.activeRun;
+    if (!activeRun) {
+      return 'No monitor run is active.';
+    }
+
+    const startedAt = Date.parse(String(activeRun.startedAt || ''));
+    const elapsedMs = Number.isNaN(startedAt) ? 0 : Date.now() - startedAt;
+    const totalChecks = Number(activeRun.totalChecks) || 0;
+    const checksAttempted = Number(activeRun.checksAttempted) || 0;
+    const successfulChecks = Number(activeRun.successfulChecks) || 0;
+    const facilitiesWithAvailability = Number(activeRun.facilitiesWithAvailability) || 0;
+    const currentParkName = String(activeRun.currentParkName || '').trim();
+    const currentFacilityName = String(activeRun.currentFacilityName || '').trim();
+    const currentRangeLabel = String(activeRun.currentRangeLabel || '').trim();
+    const lines = [`${activeRun.mode} run in progress for ${formatDuration(elapsedMs)}.`];
+
+    if (totalChecks > 0) {
+      lines.push(`Progress: ${checksAttempted}/${totalChecks} checks, ${successfulChecks} successful responses.`);
+    }
+    if (currentParkName && currentFacilityName && currentRangeLabel) {
+      lines.push(`Current: ${currentParkName} / ${currentFacilityName} / ${currentRangeLabel}`);
+    }
+    lines.push(`Openings found so far: ${facilitiesWithAvailability}`);
+    return lines.join('\n');
+  }
+
   async checkFacility(facilityId: number, startDate: string, nights: number): Promise<Record<string, unknown> | null> {
     try {
       const response = await fetch(`${RDR_BASE}/search/grid`, {
@@ -159,11 +195,20 @@ class CampgroundMonitor {
       alertsSent: 0,
       errors: [],
     };
+    const scope = this.scopeSummary();
 
     state.activeRun = {
       mode,
       pid: process.pid,
       startedAt: run.startedAt,
+      totalChecks: scope.totalChecks,
+      checksAttempted: 0,
+      successfulChecks: 0,
+      facilitiesWithAvailability: 0,
+      currentParkName: null,
+      currentFacilityName: null,
+      currentRangeLabel: null,
+      lastUpdatedAt: run.startedAt,
     };
     this.recordEvent(state, `Started ${mode} run`);
     this.saveState(state);
@@ -176,6 +221,21 @@ class CampgroundMonitor {
       for (const range of DATE_RANGES) {
         for (const target of TARGETS) {
           run.checksAttempted += 1;
+          state.activeRun = {
+            ...(state.activeRun || {}),
+            mode,
+            pid: process.pid,
+            startedAt: run.startedAt,
+            totalChecks: scope.totalChecks,
+            checksAttempted: run.checksAttempted,
+            successfulChecks: run.successfulChecks,
+            facilitiesWithAvailability,
+            currentParkName: target.parkName,
+            currentFacilityName: target.facilityName,
+            currentRangeLabel: range.label,
+            lastUpdatedAt: nowIso(),
+          };
+          this.saveState(state);
           const key = `${target.facilityId}:${range.startDate}`;
           if (state.alerted[key] && now - state.alerted[key] < 2 * 60 * 60 * 1000) {
             continue;
@@ -190,12 +250,41 @@ class CampgroundMonitor {
           }
 
           run.successfulChecks += 1;
+          state.activeRun = {
+            ...(state.activeRun || {}),
+            mode,
+            pid: process.pid,
+            startedAt: run.startedAt,
+            totalChecks: scope.totalChecks,
+            checksAttempted: run.checksAttempted,
+            successfulChecks: run.successfulChecks,
+            facilitiesWithAvailability,
+            currentParkName: target.parkName,
+            currentFacilityName: target.facilityName,
+            currentRangeLabel: range.label,
+            lastUpdatedAt: nowIso(),
+          };
           if (result.available > 0) {
             facilitiesWithAvailability += 1;
             alerts.push(this.formatAlert(target, range, result));
             state.alerted[key] = now;
             this.recordEvent(state, `Availability found at ${target.parkName} ${target.facilityName} (${range.label})`);
           }
+          state.activeRun = {
+            ...(state.activeRun || {}),
+            mode,
+            pid: process.pid,
+            startedAt: run.startedAt,
+            totalChecks: scope.totalChecks,
+            checksAttempted: run.checksAttempted,
+            successfulChecks: run.successfulChecks,
+            facilitiesWithAvailability,
+            currentParkName: target.parkName,
+            currentFacilityName: target.facilityName,
+            currentRangeLabel: range.label,
+            lastUpdatedAt: nowIso(),
+          };
+          this.saveState(state);
 
           await sleep(300);
         }

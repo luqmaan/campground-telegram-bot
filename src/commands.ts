@@ -6,24 +6,27 @@ function parseCommand(rawText: string): Record<string, unknown> {
   const text = sanitizeText(rawText);
   if (!text) return { type: 'empty' };
 
-  const slashMatch = text.match(/^\/([a-z_]+)(?:@[\w_]+)?(?:\s+(.*))?$/i);
+  const slashMatch = text.match(/^\/([a-z][a-z0-9_-]*)(?:@[\w_]+)?(?:\s+(.*))?$/i);
   if (slashMatch) {
     const name = slashMatch[1].toLowerCase();
+    const normalized = name.replace(/-/g, '_');
     const arg = sanitizeText(slashMatch[2] || '');
-    if (name === 'start' || name === 'help') return { type: 'help' };
-    if (name === 'status') return { type: 'status' };
-    if (name === 'run_now' || name === 'runnow' || name === 'check') return { type: 'run-monitor' };
-    if (name === 'pause_monitor' || name === 'pause') return { type: 'pause-monitor' };
-    if (name === 'resume_monitor' || name === 'resume') return { type: 'resume-monitor' };
-    if (name === 'restart_monitor' || name === 'restart') return { type: 'restart-monitor' };
-    if (name === 'users') return { type: 'users' };
-    if (name === 'forget' || name === 'clear' || name === 'reset') return { type: 'forget' };
-    if (name === 'cancel') return { type: 'cancel' };
-    if (name === 'apply') return { type: 'apply', ref: arg };
-    if (name === 'deploy') return { type: 'deploy' };
-    if (name === 'logs') return { type: 'logs', scope: arg || 'all' };
-    if (name === 'claude') return { type: 'runner', runner: 'claude', prompt: arg };
-    if (name === 'codex') return { type: 'runner', runner: 'codex', prompt: arg };
+    if (normalized === 'start' || normalized === 'help') return { type: 'help' };
+    if (normalized === 'status') return { type: 'status' };
+    if (normalized === 'run_now' || normalized === 'runnow' || normalized === 'check' || normalized === 'check_now') {
+      return { type: 'run-monitor' };
+    }
+    if (normalized === 'pause_monitor' || normalized === 'pause') return { type: 'pause-monitor' };
+    if (normalized === 'resume_monitor' || normalized === 'resume') return { type: 'resume-monitor' };
+    if (normalized === 'restart_monitor' || normalized === 'restart') return { type: 'restart-monitor' };
+    if (normalized === 'users') return { type: 'users' };
+    if (normalized === 'forget' || normalized === 'clear' || normalized === 'reset') return { type: 'forget' };
+    if (normalized === 'cancel') return { type: 'cancel' };
+    if (normalized === 'apply') return { type: 'apply', ref: arg };
+    if (normalized === 'deploy') return { type: 'deploy' };
+    if (normalized === 'logs') return { type: 'logs', scope: arg || 'all' };
+    if (normalized === 'claude') return { type: 'runner', runner: 'claude', prompt: arg };
+    if (normalized === 'codex') return { type: 'runner', runner: 'codex', prompt: arg };
   }
 
   const lower = text.toLowerCase();
@@ -93,7 +96,33 @@ function statusMessage(input: {
   ];
 
   if (monitorStatus.activeRun) {
-    lines.push(`Active monitor run: ${monitorStatus.activeRun.mode} since ${monitorStatus.activeRun.startedAt}`);
+    const progressBits: string[] = [];
+    const totalChecks = Number(monitorStatus.activeRun.totalChecks) || 0;
+    const checksAttempted = Number(monitorStatus.activeRun.checksAttempted) || 0;
+    const successfulChecks = Number(monitorStatus.activeRun.successfulChecks) || 0;
+    const facilitiesWithAvailability = Number(monitorStatus.activeRun.facilitiesWithAvailability) || 0;
+    const currentParkName = sanitizeText(monitorStatus.activeRun.currentParkName || '');
+    const currentFacilityName = sanitizeText(monitorStatus.activeRun.currentFacilityName || '');
+    const currentRangeLabel = sanitizeText(monitorStatus.activeRun.currentRangeLabel || '');
+
+    if (totalChecks > 0) {
+      progressBits.push(`progress ${checksAttempted}/${totalChecks}`);
+    }
+    if (successfulChecks > 0) {
+      progressBits.push(`responses ${successfulChecks}`);
+    }
+    if (facilitiesWithAvailability > 0) {
+      progressBits.push(`openings ${facilitiesWithAvailability}`);
+    }
+    if (currentParkName && currentFacilityName && currentRangeLabel) {
+      progressBits.push(`current ${currentParkName} / ${currentFacilityName} / ${currentRangeLabel}`);
+    }
+
+    lines.push(
+      `Active monitor run: ${monitorStatus.activeRun.mode} since ${monitorStatus.activeRun.startedAt}${
+        progressBits.length > 0 ? ` | ${progressBits.join(', ')}` : ''
+      }`
+    );
   } else {
     lines.push(`Last check: ${formatSince(Number(monitorStatus.lastCheck) || 0)}`);
   }
@@ -196,6 +225,39 @@ function runnerStartedMessage(activeTask: Record<string, unknown>): string {
   return lines.join('\n');
 }
 
+function manualRunStartedMessage(scope: Record<string, unknown>): string {
+  const totalChecks = Number(scope.totalChecks) || 0;
+  const targetCount = Number(scope.targetCount) || 0;
+  const rangeCount = Number(scope.rangeCount) || 0;
+  return [
+    'Starting a manual campsite check now.',
+    `Scope: ${totalChecks} checks across ${targetCount} campground targets and ${rangeCount} date ranges.`,
+    'Typical runtime: about 35-45s.',
+  ].join('\n');
+}
+
+function manualRunProgressMessage(activeRun: Record<string, unknown>): string {
+  const startedAt = Date.parse(String(activeRun.startedAt || ''));
+  const elapsedMs = Number.isNaN(startedAt) ? 0 : Date.now() - startedAt;
+  const totalChecks = Number(activeRun.totalChecks) || 0;
+  const checksAttempted = Number(activeRun.checksAttempted) || 0;
+  const successfulChecks = Number(activeRun.successfulChecks) || 0;
+  const facilitiesWithAvailability = Number(activeRun.facilitiesWithAvailability) || 0;
+  const currentParkName = sanitizeText(activeRun.currentParkName || '');
+  const currentFacilityName = sanitizeText(activeRun.currentFacilityName || '');
+  const currentRangeLabel = sanitizeText(activeRun.currentRangeLabel || '');
+
+  const lines = [`Manual campsite check running for ${formatDuration(elapsedMs)}.`];
+  if (totalChecks > 0) {
+    lines.push(`Progress: ${checksAttempted}/${totalChecks} checks, ${successfulChecks} successful responses.`);
+  }
+  if (currentParkName && currentFacilityName && currentRangeLabel) {
+    lines.push(`Current: ${currentParkName} / ${currentFacilityName} / ${currentRangeLabel}`);
+  }
+  lines.push(`Openings found so far: ${facilitiesWithAvailability}`);
+  return lines.join('\n');
+}
+
 function runnerProgressMessage(progress: Record<string, unknown>): string {
   const lines = [
     `${String(progress.runner)} still running after ${formatDuration(Number(progress.elapsedMs) || 0)}.`,
@@ -237,6 +299,8 @@ function runnerResultMessage(result: Record<string, unknown>, rootDir: string): 
 module.exports = {
   helpMessage,
   logsMessage,
+  manualRunProgressMessage,
+  manualRunStartedMessage,
   parseCommand,
   runnerProgressMessage,
   runnerResultMessage,
