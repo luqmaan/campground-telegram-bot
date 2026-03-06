@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 
 const config = require('./config.ts');
@@ -109,6 +110,14 @@ class SessionStore {
 
   sessionFile(chatId: string | number): string {
     return path.join(config.SESSION_DIR, `${chatId}.json`);
+  }
+
+  listSessionIds(): string[] {
+    ensureDir(config.SESSION_DIR);
+    return fs
+      .readdirSync(config.SESSION_DIR)
+      .filter((name: string) => name.endsWith('.json'))
+      .map((name: string) => name.replace(/\.json$/, ''));
   }
 
   defaultSession(chatId: string | number): SessionState {
@@ -259,6 +268,58 @@ class SessionStore {
       session.activeTask = null;
       return session;
     });
+  }
+
+  reconcileInterruptedTasks(): Array<{ chatId: string; runner: RunnerName; pid: number | null }> {
+    const repaired: Array<{ chatId: string; runner: RunnerName; pid: number | null }> = [];
+
+    for (const chatId of this.listSessionIds()) {
+      const session = this.getSession(chatId);
+      const activeTask = session.activeTask;
+      if (!activeTask) continue;
+
+      const pid = Number(activeTask.pid) || null;
+      if (pid) {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {}
+      }
+
+      const startedAtMs = Date.parse(String(activeTask.startedAt || ''));
+      const finishedAt = nowIso();
+      const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
+      const warnings = [...(Array.isArray(activeTask.warnings) ? activeTask.warnings : []), 'Task was interrupted because bilal69-bot restarted.'];
+
+      session.lastResult = {
+        id: String(activeTask.id || `interrupted-${Date.now()}`),
+        runner: activeTask.runner,
+        status: 'failed',
+        summary: 'Interrupted because bilal69-bot restarted before the task finished.',
+        finalOutput: null,
+        startedAt: String(activeTask.startedAt || finishedAt),
+        finishedAt,
+        durationMs,
+        stdoutTail: String(activeTask.stdoutTail || ''),
+        stderrTail: String(activeTask.stderrTail || ''),
+        branchName: activeTask.branchName || null,
+        commitSha: null,
+        changedFiles: Array.isArray(activeTask.changedFiles) ? activeTask.changedFiles.map((value) => String(value)) : [],
+        keptWorktreePath: activeTask.worktreePath || null,
+        lastKnownStage: activeTask.statusStage || null,
+        lastKnownSummary: activeTask.statusSummary || null,
+        lastKnownHypothesis: activeTask.statusHypothesis || null,
+        lastKnownEvidence: activeTask.statusEvidence || null,
+        lastKnownDecision: activeTask.statusDecision || null,
+        lastKnownNextStep: activeTask.statusNextStep || null,
+        warnings,
+      };
+      session.lastRunner = activeTask.runner;
+      session.activeTask = null;
+      this.saveSession(chatId, session);
+      repaired.push({ chatId, runner: activeTask.runner, pid });
+    }
+
+    return repaired;
   }
 
   defaultAuthState(): AuthState {

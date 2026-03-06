@@ -831,10 +831,14 @@ async function main(): Promise<void> {
   ensureDir(config.PROMPT_DIR);
   ensureDir(config.TMP_DIR);
 
+  const repairedTasks = sessionStore.reconcileInterruptedTasks();
   log('INFO', 'Starting bilal69 bot');
   log('INFO', `Group chat: ${config.GROUP_CHAT_ID}`);
   log('INFO', `Owner user: ${config.OWNER_USER_ID}`);
   log('INFO', `Node version: ${process.version}`);
+  if (repairedTasks.length > 0) {
+    log('WARN', 'Reconciled interrupted runner tasks', repairedTasks);
+  }
   await monitor.startScheduler();
   await pollLoop();
 }
