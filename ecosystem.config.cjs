@@ -2,7 +2,8 @@ module.exports = {
   apps: [
     {
       name: 'bilal69-bot',
-      script: 'src/bot.js',
+      script: 'src/bot.ts',
+      interpreter: `${__dirname}/bin/run-bot.sh`,
       cwd: __dirname,
       instances: 1,
       exec_mode: 'fork',
@@ -14,6 +15,12 @@ module.exports = {
       max_memory_restart: '256M',
       env: {
         NODE_ENV: 'production',
+        BOT_NODE_MAX_OLD_SPACE_SIZE_MB: '192',
+        AGENT_ADDRESS_SPACE_MB: '1536',
+        AGENT_RSS_MB: '1024',
+        AGENT_CPU_SECONDS: '600',
+        AGENT_NOFILE: '1024',
+        AGENT_NPROC: '256',
       },
       error_file: `${__dirname}/logs/bilal69-bot-error.log`,
       out_file: `${__dirname}/logs/bilal69-bot-out.log`,

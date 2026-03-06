@@ -47,6 +47,6 @@ const DATE_RANGES = [
 ];
 
 module.exports = {
-  TARGETS,
   DATE_RANGES,
+  TARGETS,
 };

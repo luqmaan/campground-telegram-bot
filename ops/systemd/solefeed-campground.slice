@@ -1,0 +1,10 @@
+[Unit]
+Description=Campground Telegram bot slice
+
+[Slice]
+CPUQuota=150%
+CPUWeight=20
+IOWeight=50
+MemoryHigh=1024M
+MemoryMax=1536M
+TasksMax=256

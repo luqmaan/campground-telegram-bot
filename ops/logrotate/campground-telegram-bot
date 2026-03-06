@@ -1,0 +1,11 @@
+/home/luq/campground-telegram-bot/logs/*.log {
+  daily
+  size 20M
+  rotate 7
+  missingok
+  notifempty
+  compress
+  delaycompress
+  copytruncate
+  su luq luq
+}

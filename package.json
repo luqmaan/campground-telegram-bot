@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "description": "Standalone Telegram bot for California campground monitoring",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.13.1"
   },
   "scripts": {
-    "start": "node src/bot.js",
-    "check": "node --check src/bot.js && node --check src/monitor.js && node --check src/config.js && node --check src/monitor-config.js"
+    "start": "node src/bot.ts",
+    "check": "node scripts/check.ts src/bot.ts src/commands.ts src/config.ts src/media.ts src/monitor.ts src/monitor-config.ts src/runner-claude.ts src/runner-codex.ts src/runner-common.ts src/session-store.ts src/utils.ts && bash -n bin/run-bot.sh && bash -n bin/run-agent.sh"
   }
 }

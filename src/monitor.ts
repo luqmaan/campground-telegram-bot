@@ -1,41 +1,25 @@
 const fs = require('node:fs');
 
-const config = require('./config');
-const { TARGETS, DATE_RANGES } = require('./monitor-config');
+const config = require('./config.ts');
+const { DATE_RANGES, TARGETS } = require('./monitor-config.ts');
+const { nowIso, readJson, sleep, writeJson } = require('./utils.ts');
 
 const RDR_BASE = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
 
-function ensureDir() {
-  fs.mkdirSync(config.DATA_DIR, { recursive: true });
-}
-
-function readJson(filePath, fallback) {
-  ensureDir();
-  if (!fs.existsSync(filePath)) return fallback;
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(filePath, value) {
-  ensureDir();
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
+type SendTelegramFn = (chatId: string | number, text: string, options?: { threadId?: number | null; html?: boolean }) => Promise<void>;
 
 class CampgroundMonitor {
-  constructor(sendTelegram) {
+  sendTelegram: SendTelegramFn;
+  interval: ReturnType<typeof setInterval> | null;
+  started: boolean;
+
+  constructor(sendTelegram: SendTelegramFn) {
     this.sendTelegram = sendTelegram;
     this.interval = null;
     this.started = false;
   }
 
-  defaultState() {
+  defaultState(): Record<string, unknown> {
     return {
       alerted: {},
       lastCheck: 0,
@@ -49,7 +33,7 @@ class CampgroundMonitor {
     };
   }
 
-  loadState() {
+  loadState(): Record<string, unknown> {
     const raw = readJson(config.MONITOR_STATE_FILE, this.defaultState());
     return {
       ...this.defaultState(),
@@ -59,23 +43,23 @@ class CampgroundMonitor {
     };
   }
 
-  saveState(state) {
+  saveState(state: Record<string, unknown>): void {
     writeJson(config.MONITOR_STATE_FILE, state);
   }
 
-  recordEvent(state, message) {
-    state.recentEvents = [...(state.recentEvents || []), `[${nowIso()}] ${message}`].slice(-20);
+  recordEvent(state: Record<string, unknown>, message: string): void {
+    state.recentEvents = [...(Array.isArray(state.recentEvents) ? state.recentEvents : []), `[${nowIso()}] ${message}`].slice(-20);
   }
 
-  loadLock() {
+  loadLock(): Record<string, unknown> | null {
     return readJson(config.MONITOR_LOCK_FILE, null);
   }
 
-  acquireLock(mode) {
+  acquireLock(mode: string): boolean {
     const current = this.loadLock();
     const now = Date.now();
     if (current?.startedAt) {
-      const startedAt = Date.parse(current.startedAt);
+      const startedAt = Date.parse(String(current.startedAt));
       if (!Number.isNaN(startedAt) && now - startedAt < config.MONITOR_LOCK_STALE_MS) {
         return false;
       }
@@ -88,24 +72,26 @@ class CampgroundMonitor {
     return true;
   }
 
-  releaseLock() {
+  releaseLock(): void {
     try {
       fs.rmSync(config.MONITOR_LOCK_FILE, { force: true });
     } catch {}
   }
 
-  cleanupAlerts(state) {
+  cleanupAlerts(state: Record<string, unknown>): void {
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    for (const key of Object.keys(state.alerted)) {
-      if (state.alerted[key] < cutoff) {
-        delete state.alerted[key];
+    const alerted = state.alerted || {};
+    for (const key of Object.keys(alerted)) {
+      if (alerted[key] < cutoff) {
+        delete alerted[key];
       }
     }
+    state.alerted = alerted;
   }
 
-  async checkFacility(facilityId, startDate, nights) {
+  async checkFacility(facilityId: number, startDate: string, nights: number): Promise<Record<string, unknown> | null> {
     try {
-      const res = await fetch(`${RDR_BASE}/search/grid`, {
+      const response = await fetch(`${RDR_BASE}/search/grid`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -121,16 +107,16 @@ class CampgroundMonitor {
           UnitTypesGroupIds: [],
         }),
       });
-      if (!res.ok) return null;
-      const data = await res.json();
+      if (!response.ok) return null;
+      const data = await response.json();
       const units = data?.Facility?.Units;
       if (!units) return null;
       const entries = Object.values(units);
-      const availableUnits = entries.filter((unit) => unit.IsAvailable);
+      const availableUnits = entries.filter((unit: Record<string, unknown>) => unit.IsAvailable);
       return {
         available: availableUnits.length,
         total: entries.length,
-        sites: availableUnits.slice(0, 5).map((unit) => ({
+        sites: availableUnits.slice(0, 5).map((unit: Record<string, unknown>) => ({
           name: unit.ShortName || unit.Name || '?',
           rate: unit.MinRate || 0,
         })),
@@ -140,9 +126,9 @@ class CampgroundMonitor {
     }
   }
 
-  formatAlert(target, range, result) {
+  formatAlert(target: Record<string, unknown>, range: Record<string, unknown>, result: Record<string, unknown>): string {
     const tierLabel = target.tier === 1 ? '🔥' : target.tier === 2 ? '⭐' : '📍';
-    const siteList = result.sites.map((site) => `  ${site.name} ($${site.rate}/night)`).join('\n');
+    const siteList = result.sites.map((site: Record<string, unknown>) => `  ${site.name} ($${site.rate}/night)`).join('\n');
     return (
       `${tierLabel} <b>${target.parkName}</b> — ${target.facilityName}\n` +
       `${range.label}: <b>${result.available} sites available</b> (of ${result.total})\n` +
@@ -150,7 +136,7 @@ class CampgroundMonitor {
     );
   }
 
-  async runCheck(mode = 'scheduled') {
+  async runCheck(mode = 'scheduled'): Promise<Record<string, unknown>> {
     const state = this.loadState();
     this.cleanupAlerts(state);
 
@@ -161,7 +147,7 @@ class CampgroundMonitor {
     }
 
     const startedAt = Date.now();
-    const run = {
+    const run: Record<string, unknown> = {
       startedAt: nowIso(),
       finishedAt: null,
       mode,
@@ -182,7 +168,7 @@ class CampgroundMonitor {
     this.recordEvent(state, `Started ${mode} run`);
     this.saveState(state);
 
-    const alerts = [];
+    const alerts: string[] = [];
     let facilitiesWithAvailability = 0;
     const now = Date.now();
 
@@ -211,7 +197,7 @@ class CampgroundMonitor {
             this.recordEvent(state, `Availability found at ${target.parkName} ${target.facilityName} (${range.label})`);
           }
 
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await sleep(300);
         }
       }
 
@@ -243,7 +229,7 @@ class CampgroundMonitor {
       run.finishedAt = nowIso();
       run.durationMs = Date.now() - startedAt;
       state.activeRun = null;
-      state.runs = [...state.runs, run].slice(-10);
+      state.runs = [...(Array.isArray(state.runs) ? state.runs : []), run].slice(-10);
       this.saveState(state);
       this.releaseLock();
     }
@@ -251,7 +237,7 @@ class CampgroundMonitor {
     return { skipped: false, run };
   }
 
-  async startScheduler() {
+  async startScheduler(): Promise<void> {
     const state = this.loadState();
     if (!state.schedulerEnabled) {
       this.started = true;
@@ -267,14 +253,14 @@ class CampgroundMonitor {
     }, config.CHECK_INTERVAL_MS);
   }
 
-  stopSchedulerLoop() {
+  stopSchedulerLoop(): void {
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
   }
 
-  pauseScheduler() {
+  pauseScheduler(): void {
     const state = this.loadState();
     state.schedulerEnabled = false;
     this.recordEvent(state, 'Scheduler paused');
@@ -282,7 +268,7 @@ class CampgroundMonitor {
     this.stopSchedulerLoop();
   }
 
-  async resumeScheduler() {
+  async resumeScheduler(): Promise<void> {
     const state = this.loadState();
     state.schedulerEnabled = true;
     this.recordEvent(state, 'Scheduler resumed');
@@ -290,7 +276,7 @@ class CampgroundMonitor {
     await this.startScheduler();
   }
 
-  async restartScheduler() {
+  async restartScheduler(): Promise<void> {
     this.stopSchedulerLoop();
     const state = this.loadState();
     state.schedulerEnabled = true;
@@ -299,7 +285,7 @@ class CampgroundMonitor {
     await this.startScheduler();
   }
 
-  latestRunSummary() {
+  latestRunSummary(): string {
     const state = this.loadState();
     const latest = state.runs[state.runs.length - 1];
     if (!latest) {
@@ -308,7 +294,7 @@ class CampgroundMonitor {
     return `Latest run: ${latest.mode} ${latest.success ? 'ok' : 'failed'} at ${latest.finishedAt}. Alerts ${latest.alertsSent}, openings ${latest.facilitiesWithAvailability}, checks ${latest.successfulChecks}/${latest.checksAttempted}, duration ${Math.round(latest.durationMs / 1000)}s.`;
   }
 
-  getStatus() {
+  getStatus(): Record<string, unknown> {
     const state = this.loadState();
     return {
       schedulerEnabled: Boolean(state.schedulerEnabled),
@@ -316,8 +302,8 @@ class CampgroundMonitor {
       lastCheck: state.lastCheck,
       lastSuccessAt: state.lastSuccessAt,
       lastError: state.lastError,
-      runs: state.runs.slice(-3).reverse(),
-      recentEvents: state.recentEvents.slice(-10).reverse(),
+      runs: Array.isArray(state.runs) ? state.runs.slice(-3).reverse() : [],
+      recentEvents: Array.isArray(state.recentEvents) ? state.recentEvents.slice(-10).reverse() : [],
     };
   }
 }

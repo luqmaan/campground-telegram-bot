@@ -1,5 +1,9 @@
 .env
 data/*.json
 !data/.gitkeep
+data/sessions/
+data/uploads/
+data/prompts/
+data/tmp/
 *.log
 node_modules/
