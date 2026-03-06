@@ -45,6 +45,19 @@ function log(level: string, message: string, data?: unknown): void {
   }
 }
 
+async function telegramApi(method: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const response = await fetch(`https://api.telegram.org/bot${config.BOT_TOKEN}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!data.ok) {
+    throw new Error(`Telegram ${method} failed: ${JSON.stringify(data).slice(0, 300)}`);
+  }
+  return data;
+}
+
 async function sendTelegram(chatId: string | number, text: string, options: { threadId?: number | null; html?: boolean } = {}): Promise<void> {
   if (!text || !sanitizeText(text)) return;
   const threadId = options.threadId ?? null;
@@ -61,17 +74,50 @@ async function sendTelegram(chatId: string | number, text: string, options: { th
     };
     if (threadId) payload.message_thread_id = threadId;
     if (html) payload.parse_mode = 'HTML';
-
-    const response = await fetch(`https://api.telegram.org/bot${config.BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json();
-    if (!data.ok) {
-      throw new Error(`Telegram sendMessage failed: ${JSON.stringify(data).slice(0, 300)}`);
-    }
+    await telegramApi('sendMessage', payload);
   }
+}
+
+async function sendChatAction(
+  chatId: string | number,
+  action: 'typing' | 'upload_document',
+  options: { threadId?: number | null } = {}
+): Promise<void> {
+  const payload: Record<string, unknown> = {
+    chat_id: Number(chatId),
+    action,
+  };
+  if (options.threadId) payload.message_thread_id = options.threadId;
+  await telegramApi('sendChatAction', payload);
+}
+
+function startChatActionPulse(
+  chatId: string | number,
+  options: { threadId?: number | null; action?: 'typing' | 'upload_document'; intervalMs?: number } = {}
+): () => void {
+  const action = options.action || 'typing';
+  const intervalMs = options.intervalMs || 4000;
+  let stopped = false;
+
+  const pulse = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      await sendChatAction(chatId, action, { threadId: options.threadId });
+    } catch (error) {
+      log('WARN', 'Failed to send Telegram chat action', error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  void pulse();
+  const timer = setInterval(() => {
+    void pulse();
+  }, intervalMs);
+
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 const monitor = new CampgroundMonitor(sendTelegram);
@@ -105,6 +151,7 @@ async function startManualRun(chatId: string | number, threadId: number | null |
   }
 
   const scope = monitor.scopeSummary();
+  const stopChatAction = startChatActionPulse(chatId, { threadId });
   let lastProgressMessage = '';
   const sendManualProgress = async (): Promise<void> => {
     const activeRun = monitor.getStatus().activeRun;
@@ -142,6 +189,7 @@ async function startManualRun(chatId: string | number, threadId: number | null |
     })
     .finally(() => {
       clearInterval(progressInterval);
+      stopChatAction();
       manualRunPromise = null;
     });
 }
@@ -181,6 +229,7 @@ async function startRunnerForMessage(input: {
   sessionStore.addHistory(chatId, 'user', `${sender}: ${historyEntry}`);
 
   const startTask = input.runner === 'codex' ? startCodexTask : startClaudeTask;
+  const stopChatAction = startChatActionPulse(chatId, { threadId: input.threadId });
   const handle = startTask({
     prompt,
     uploads,
@@ -230,6 +279,9 @@ async function startRunnerForMessage(input: {
       runningTasks.delete(chatId);
       sessionStore.setActiveTask(chatId, null);
       await sendTelegram(chatId, `${input.runner} failed before completion: ${error.message}`, { threadId: input.threadId });
+    })
+    .finally(() => {
+      stopChatAction();
     });
 
   if (handle.getPid()) {
@@ -283,6 +335,11 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
 
   if (command.type === 'status') {
     await sendTelegram(chatId, currentStatusMessage(chatId), { threadId });
+    return;
+  }
+
+  if (command.type === 'scope') {
+    await sendTelegram(chatId, monitor.scopeMessage(), { threadId });
     return;
   }
 

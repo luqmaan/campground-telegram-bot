@@ -13,6 +13,7 @@ function parseCommand(rawText: string): Record<string, unknown> {
     const arg = sanitizeText(slashMatch[2] || '');
     if (normalized === 'start' || normalized === 'help') return { type: 'help' };
     if (normalized === 'status') return { type: 'status' };
+    if (normalized === 'scope' || normalized === 'targets' || normalized === 'parks') return { type: 'scope' };
     if (normalized === 'run_now' || normalized === 'runnow' || normalized === 'check' || normalized === 'check_now') {
       return { type: 'run-monitor' };
     }
@@ -32,6 +33,13 @@ function parseCommand(rawText: string): Record<string, unknown> {
   const lower = text.toLowerCase();
   if (/^(help|\?|actions?)$/.test(lower)) return { type: 'help' };
   if (/^(status|health|overview)$/.test(lower)) return { type: 'status' };
+  if (
+    /^(scope|targets|parks|what are you checking|what campsites are you checking|what campgrounds are you checking|what parks are you checking|which campsites are you checking|which campgrounds are you checking)\??$/.test(
+      lower
+    )
+  ) {
+    return { type: 'scope' };
+  }
   if (/^(users|who|authorized)$/.test(lower)) return { type: 'users' };
   if (/^(run|run now|check|check now)$/.test(lower)) return { type: 'run-monitor' };
   if (/^(pause|pause monitor|stop monitor)$/.test(lower)) return { type: 'pause-monitor' };
@@ -54,6 +62,7 @@ function helpMessage(): string {
   return [
     'Campground bot commands',
     '/status',
+    '/scope',
     '/run-now',
     '/pause-monitor',
     '/resume-monitor',

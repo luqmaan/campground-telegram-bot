@@ -97,6 +97,36 @@ class CampgroundMonitor {
     };
   }
 
+  scopeMessage(): string {
+    const scope = this.scopeSummary();
+    const parks = new Map<string, string[]>();
+    for (const target of TARGETS) {
+      if (!parks.has(target.parkName)) {
+        parks.set(target.parkName, []);
+      }
+      parks.get(target.parkName)?.push(target.facilityName);
+    }
+
+    const lines = [
+      `Current monitor scope: ${scope.totalChecks} checks per run`,
+      `Targets: ${scope.targetCount} campground loops / sections`,
+      `Date ranges: ${scope.rangeCount}`,
+      '',
+      'Date ranges:',
+    ];
+
+    DATE_RANGES.forEach((range) => {
+      lines.push(`- ${range.label}: ${range.startDate}`);
+    });
+
+    lines.push('', 'Parks:');
+    for (const [parkName, facilities] of parks.entries()) {
+      lines.push(`- ${parkName}: ${facilities.join(', ')}`);
+    }
+
+    return lines.join('\n');
+  }
+
   activeRunSummary(): string {
     const state = this.loadState();
     const activeRun = state.activeRun;
