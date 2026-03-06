@@ -1,5 +1,5 @@
 const config = require('./config.ts');
-const { formatDuration, formatSince, previewText, relativeDisplayPath, sanitizeText, tailText } = require('./utils.ts');
+const { formatDuration, formatSince, previewLastLines, previewText, relativeDisplayPath, sanitizeText, tailText } = require('./utils.ts');
 const { displayName } = require('./session-store.ts');
 
 function parseCommand(rawText: string): Record<string, unknown> {
@@ -398,10 +398,14 @@ function runnerCardMessage(input: Record<string, unknown>): string {
     );
   }
 
-  if (stdoutChunk) {
-    lines.push(`Output: ${previewText(stdoutChunk, 260)}`);
-  } else if (stderrChunk) {
-    lines.push(`stderr: ${previewText(stderrChunk, 260)}`);
+  const outputPreview = previewLastLines(stdoutChunk, 4, 320);
+  const stderrPreview = previewLastLines(stderrChunk, 4, 320);
+  if (outputPreview) {
+    lines.push('Output:');
+    lines.push(outputPreview);
+  } else if (stderrPreview) {
+    lines.push('stderr:');
+    lines.push(stderrPreview);
   }
 
   if (status !== 'running' && input.summary) {

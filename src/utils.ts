@@ -110,6 +110,13 @@ function lastLines(value: unknown, maxLines = 12): string {
   return lines.slice(-maxLines).join('\n');
 }
 
+function previewLastLines(value: unknown, maxLines = 4, maxChars = 360): string | null {
+  const text = lastLines(value, maxLines);
+  if (!text) return null;
+  if (text.length <= maxChars) return text;
+  return `...\n${text.slice(text.length - maxChars)}`;
+}
+
 module.exports = {
   appendCapped,
   ensureDir,
@@ -120,6 +127,7 @@ module.exports = {
   makeId,
   nowIso,
   previewText,
+  previewLastLines,
   readJson,
   relativeDisplayPath,
   safeFileName,
