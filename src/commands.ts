@@ -200,6 +200,12 @@ function statusMessage(input: {
     if (session.lastResult.summary) {
       lines.push(`Summary: ${previewText(session.lastResult.summary, 180)}`);
     }
+    if (!session.lastResult.finalOutput && session.lastResult.lastKnownStage) {
+      lines.push(`Last stage: ${session.lastResult.lastKnownStage}`);
+    }
+    if (!session.lastResult.finalOutput && session.lastResult.lastKnownSummary) {
+      lines.push(`Last summary: ${previewText(session.lastResult.lastKnownSummary, 180)}`);
+    }
   }
 
   if (Array.isArray(monitorStatus.runs) && monitorStatus.runs.length > 0) {
@@ -267,12 +273,68 @@ function runnerStartedMessage(activeTask: Record<string, unknown>): string {
   if (activeTask.uploadCount) {
     lines.push(`Uploads: ${activeTask.uploadCount}`);
   }
-  lines.push('I will keep typing while it works.');
-  lines.push('I will post updates when there is a real decision, visible file change, or stall.');
+  lines.push('I will stream live progress as terminal output, status, or files change.');
   lines.push('Send /status at any time for the full live task details.');
   if (Array.isArray(activeTask.warnings) && activeTask.warnings.length > 0) {
     lines.push(`Warnings: ${activeTask.warnings.join(' | ')}`);
   }
+  return lines.join('\n');
+}
+
+function runnerCardMessage(input: Record<string, unknown>): string {
+  const status = String(input.status || 'running');
+  const runner = String(input.runner || 'runner');
+  const promptPreview = previewText(input.promptPreview, 140) || 'no prompt preview';
+  const changedFiles = Array.isArray(input.changedFiles) ? input.changedFiles : [];
+  const stdoutChunk = input.stdoutChunk ? String(input.stdoutChunk).trim() : '';
+  const stderrChunk = input.stderrChunk ? String(input.stderrChunk).trim() : '';
+  const statusBits = [
+    input.statusStage ? `Stage: ${input.statusStage}` : null,
+    input.statusSummary ? `Summary: ${previewText(input.statusSummary, 220)}` : null,
+    input.statusDecision ? `Decision: ${previewText(input.statusDecision, 220)}` : null,
+    input.statusNextStep ? `Next: ${previewText(input.statusNextStep, 220)}` : null,
+  ].filter(Boolean);
+
+  const lines = [
+    `${runner} ${status === 'running' ? 'running' : status} ${
+      status === 'running' ? `for ${formatDuration(Number(input.elapsedMs) || 0)}` : `in ${formatDuration(Number(input.durationMs) || 0)}`
+    }.`,
+    `Task: ${promptPreview}`,
+  ];
+
+  if (status === 'running' && Boolean(input.heartbeat)) {
+    lines.push(`No new visible activity for ${formatDuration(Number(input.idleMs) || 0)}.`);
+  }
+
+  lines.push(...statusBits);
+
+  if (changedFiles.length > 0) {
+    lines.push(
+      `Changed files: ${changedFiles.join(', ')}${
+        Number(input.changedFileCount) > changedFiles.length ? ` (+${Number(input.changedFileCount) - changedFiles.length} more)` : ''
+      }`
+    );
+  }
+
+  if (stdoutChunk) {
+    lines.push(`Output: ${previewText(stdoutChunk, 260)}`);
+  } else if (stderrChunk) {
+    lines.push(`stderr: ${previewText(stderrChunk, 260)}`);
+  }
+
+  if (status !== 'running' && input.summary) {
+    lines.push(`Summary: ${previewText(input.summary, 260)}`);
+  }
+
+  if (status !== 'running' && input.commitSha) {
+    lines.push(`Commit: ${input.commitSha}`);
+  }
+
+  if (status !== 'running' && Array.isArray(input.warnings) && input.warnings.length > 0) {
+    lines.push(`Warnings: ${input.warnings.join(' | ')}`);
+  }
+
+  lines.push(status === 'running' ? 'Use the buttons below or /status for details.' : 'Use the buttons below or /logs runner for details.');
   return lines.join('\n');
 }
 
@@ -312,6 +374,8 @@ function manualRunProgressMessage(activeRun: Record<string, unknown>): string {
 function runnerProgressMessage(progress: Record<string, unknown>): string {
   const elapsed = formatDuration(Number(progress.elapsedMs) || 0);
   const changedFiles = Array.isArray(progress.changedFiles) ? progress.changedFiles : [];
+  const stdoutChunk = progress.stdoutChunk ? String(progress.stdoutChunk).trim() : '';
+  const stderrChunk = progress.stderrChunk ? String(progress.stderrChunk).trim() : '';
   const statusBits = [
     progress.statusStage ? `Stage: ${progress.statusStage}` : null,
     progress.statusSummary ? `Summary: ${previewText(progress.statusSummary, 220)}` : null,
@@ -319,11 +383,11 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
     progress.statusNextStep ? `Next: ${previewText(progress.statusNextStep, 220)}` : null,
   ].filter(Boolean);
 
-  if (!progress.stdoutTail && !progress.stderrTail && changedFiles.length === 0 && statusBits.length === 0) {
-    return `${String(progress.runner)} is still running after ${elapsed} with no visible activity yet.\nSend /status for details or /cancel to stop it.`;
+  const lines = [`${String(progress.runner)} live at ${elapsed}.`];
+  if (progress.heartbeat) {
+    const idle = formatDuration(Number(progress.idleMs) || 0);
+    lines.push(`No new output for ${idle}, but the task is still running.`);
   }
-
-  const lines = [`${String(progress.runner)} update after ${elapsed}.`];
   lines.push(...statusBits);
   if (changedFiles.length > 0) {
     lines.push(
@@ -332,10 +396,10 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
       }`
     );
   }
-  if (progress.stdoutTail) {
-    lines.push(`stdout: ${previewText(progress.stdoutTail, 220)}`);
-  } else if (progress.stderrTail) {
-    lines.push(`stderr: ${previewText(progress.stderrTail, 220)}`);
+  if (stdoutChunk) {
+    lines.push('', 'Output:', stdoutChunk);
+  } else if (stderrChunk) {
+    lines.push('', 'stderr:', stderrChunk);
   }
   lines.push('Send /status for the full live task details.');
   return lines.join('\n');
@@ -351,6 +415,11 @@ function runnerResultMessage(result: Record<string, unknown>, rootDir: string): 
   } else if (result.summary) {
     lines.push('', String(result.summary));
   }
+
+  if (!result.finalOutput && result.lastKnownStage) lines.push(`Last stage: ${result.lastKnownStage}`);
+  if (!result.finalOutput && result.lastKnownSummary) lines.push(`Last summary: ${result.lastKnownSummary}`);
+  if (!result.finalOutput && result.lastKnownDecision) lines.push(`Last decision: ${result.lastKnownDecision}`);
+  if (!result.finalOutput && result.lastKnownNextStep) lines.push(`Last next step: ${result.lastKnownNextStep}`);
 
   if (result.branchName) lines.push('', `Branch: ${result.branchName}`);
   if (result.commitSha) lines.push(`Commit: ${result.commitSha}`);
@@ -373,6 +442,7 @@ module.exports = {
   manualRunProgressMessage,
   manualRunStartedMessage,
   parseCommand,
+  runnerCardMessage,
   runnerProgressMessage,
   runnerResultMessage,
   runnerStartedMessage,

@@ -7,9 +7,9 @@ const {
   manualRunProgressMessage,
   manualRunStartedMessage,
   parseCommand,
+  runnerCardMessage,
   runnerProgressMessage,
   runnerResultMessage,
-  runnerStartedMessage,
   statusMessage,
   uploadQueuedMessage,
   usersMessage,
@@ -42,6 +42,17 @@ type TelegramMessage = {
     video?: Record<string, unknown>;
     audio?: Record<string, unknown>;
     voice?: Record<string, unknown>;
+  };
+};
+
+type TelegramCallbackQuery = {
+  id: string;
+  from?: Record<string, unknown>;
+  data?: string;
+  message?: {
+    message_id: number;
+    chat: { id: number | string };
+    message_thread_id?: number;
   };
 };
 
@@ -89,6 +100,54 @@ async function sendTelegram(chatId: string | number, text: string, options: { th
   }
 }
 
+async function sendTelegramSingle(
+  chatId: string | number,
+  text: string,
+  options: { threadId?: number | null; html?: boolean; replyMarkup?: Record<string, unknown> | null } = {}
+): Promise<Record<string, unknown>> {
+  const payload: Record<string, unknown> = {
+    chat_id: Number(chatId),
+    text: String(text).slice(0, 3800),
+    disable_web_page_preview: true,
+  };
+  if (options.threadId) payload.message_thread_id = options.threadId;
+  if (options.html) payload.parse_mode = 'HTML';
+  if (options.replyMarkup) payload.reply_markup = options.replyMarkup;
+  const data = await telegramApi('sendMessage', payload);
+  return data.result || {};
+}
+
+async function editTelegramSingle(
+  chatId: string | number,
+  messageId: number,
+  text: string,
+  options: { html?: boolean; replyMarkup?: Record<string, unknown> | null } = {}
+): Promise<void> {
+  const payload: Record<string, unknown> = {
+    chat_id: Number(chatId),
+    message_id: Number(messageId),
+    text: String(text).slice(0, 3800),
+    disable_web_page_preview: true,
+  };
+  if (options.html) payload.parse_mode = 'HTML';
+  if (options.replyMarkup) payload.reply_markup = options.replyMarkup;
+  try {
+    await telegramApi('editMessageText', payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/message is not modified/i.test(message)) return;
+    throw error;
+  }
+}
+
+async function answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+  const payload: Record<string, unknown> = {
+    callback_query_id: callbackQueryId,
+  };
+  if (text) payload.text = text;
+  await telegramApi('answerCallbackQuery', payload);
+}
+
 async function sendChatAction(
   chatId: string | number,
   action: 'typing' | 'upload_document',
@@ -133,8 +192,25 @@ function startChatActionPulse(
 
 const monitor = new CampgroundMonitor(sendTelegram);
 const runningTasks = new Map<string, Record<string, unknown>>();
-const runnerProgressState = new Map<string, { lastActivitySignature: string; sentIdleNotice: boolean }>();
+const runnerProgressState = new Map<string, { lastEventId: number }>();
 let manualRunPromise: Promise<void> | null = null;
+
+function runnerTaskKeyboard(running: boolean): Record<string, unknown> {
+  return {
+    inline_keyboard: [
+      running
+        ? [
+            { text: 'Status', callback_data: 'runner:status' },
+            { text: 'Logs', callback_data: 'runner:logs' },
+            { text: 'Cancel', callback_data: 'runner:cancel' },
+          ]
+        : [
+            { text: 'Status', callback_data: 'runner:status' },
+            { text: 'Logs', callback_data: 'runner:logs' },
+          ],
+    ],
+  };
+}
 
 function messageBodyText(message?: TelegramMessage | Record<string, unknown> | null): string {
   if (!message) return '';
@@ -184,50 +260,66 @@ function hasBlockingActivity(): boolean {
   return runningTasks.size > 0 || Boolean(manualRunPromise);
 }
 
-function hasVisibleRunnerActivity(progress: Record<string, unknown>): boolean {
-  return Boolean(
-    progress.stdoutTail ||
-      progress.stderrTail ||
-      (Array.isArray(progress.changedFiles) && progress.changedFiles.length > 0) ||
-      progress.statusStage ||
-      progress.statusSummary ||
-      progress.statusDecision ||
-      progress.statusNextStep
-  );
-}
-
 function shouldSendRunnerProgress(chatId: string, progress: Record<string, unknown>): boolean {
-  const state = runnerProgressState.get(chatId) || { lastActivitySignature: '', sentIdleNotice: false };
-  const activitySignature = [
-    progress.statusStage || '',
-    progress.statusSummary || '',
-    progress.statusDecision || '',
-    progress.statusNextStep || '',
-    Array.isArray(progress.changedFiles) ? progress.changedFiles.join(',') : '',
-    String(progress.changedFileCount || 0),
-    progress.stdoutTail || '',
-    progress.stderrTail || '',
-  ].join('|');
-
-  if (hasVisibleRunnerActivity(progress)) {
-    if (activitySignature === state.lastActivitySignature) {
-      runnerProgressState.set(chatId, state);
-      return false;
-    }
-    state.lastActivitySignature = activitySignature;
-    state.sentIdleNotice = false;
-    runnerProgressState.set(chatId, state);
-    return true;
-  }
-
-  if (state.sentIdleNotice || Number(progress.elapsedMs) < 120_000) {
-    runnerProgressState.set(chatId, state);
+  const state = runnerProgressState.get(chatId) || { lastEventId: 0 };
+  const eventId = Number(progress.eventId) || 0;
+  if (!eventId || eventId <= state.lastEventId) {
     return false;
   }
-
-  state.sentIdleNotice = true;
+  state.lastEventId = eventId;
   runnerProgressState.set(chatId, state);
   return true;
+}
+
+async function upsertRunnerTaskCard(input: {
+  chatId: string;
+  threadId: number | null | undefined;
+  activeTask: Record<string, unknown> | null;
+  progress?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
+}): Promise<void> {
+  if (!input.activeTask) return;
+
+  const text = runnerCardMessage({
+    status: input.result ? input.result.status : 'running',
+    runner: input.activeTask.runner,
+    promptPreview: input.activeTask.promptPreview,
+    elapsedMs: input.progress?.elapsedMs || (input.result ? input.result.durationMs : Date.now() - Date.parse(String(input.activeTask.startedAt || nowIso()))),
+    durationMs: input.result?.durationMs || 0,
+    heartbeat: input.progress?.heartbeat || false,
+    idleMs: input.progress?.idleMs || 0,
+    statusStage: input.result?.lastKnownStage || input.activeTask.statusStage || input.progress?.statusStage || null,
+    statusSummary: input.result?.lastKnownSummary || input.activeTask.statusSummary || input.progress?.statusSummary || null,
+    statusDecision: input.result?.lastKnownDecision || input.activeTask.statusDecision || input.progress?.statusDecision || null,
+    statusNextStep: input.result?.lastKnownNextStep || input.activeTask.statusNextStep || input.progress?.statusNextStep || null,
+    changedFiles: input.result?.changedFiles || input.activeTask.changedFiles || input.progress?.changedFiles || [],
+    changedFileCount:
+      (Array.isArray(input.result?.changedFiles) ? input.result.changedFiles.length : 0) ||
+      input.activeTask.changedFileCount ||
+      input.progress?.changedFileCount ||
+      0,
+    stdoutChunk: input.progress?.stdoutChunk || '',
+    stderrChunk: input.progress?.stderrChunk || '',
+    summary: input.result?.summary || null,
+    commitSha: input.result?.commitSha || null,
+    warnings: input.result?.warnings || input.activeTask.warnings || [],
+  });
+
+  if (input.activeTask.cardMessageId) {
+    await editTelegramSingle(input.chatId, Number(input.activeTask.cardMessageId), text, {
+      replyMarkup: runnerTaskKeyboard(!input.result),
+    });
+    return;
+  }
+
+  const sent = await sendTelegramSingle(input.chatId, text, {
+    threadId: input.threadId,
+    replyMarkup: runnerTaskKeyboard(true),
+  });
+  sessionStore.setTaskCard(input.chatId, {
+    messageId: Number(sent.message_id) || null,
+    threadId: input.threadId ?? null,
+  });
 }
 
 async function startManualRun(chatId: string | number, threadId: number | null | undefined): Promise<void> {
@@ -324,7 +416,7 @@ async function startRunnerForMessage(input: {
 
   const startTask = input.runner === 'codex' ? startCodexTask : startClaudeTask;
   const stopChatAction = startChatActionPulse(chatId, { threadId: input.threadId });
-  runnerProgressState.set(chatId, { lastActivitySignature: '', sentIdleNotice: false });
+  runnerProgressState.set(chatId, { lastEventId: 0 });
   const handle = startTask({
     prompt,
     replyContext: input.replyContext,
@@ -337,18 +429,39 @@ async function startRunnerForMessage(input: {
       if (!shouldSendRunnerProgress(chatId, progress)) {
         return;
       }
-      await sendTelegram(chatId, runnerProgressMessage(progress), { threadId: input.threadId });
+      const activeTask = sessionStore.getSession(chatId).activeTask;
+      await upsertRunnerTaskCard({
+        chatId,
+        threadId: input.threadId,
+        activeTask,
+        progress,
+      });
     },
   });
 
   sessionStore.setActiveTask(chatId, handle.meta);
   runningTasks.set(chatId, handle);
-  await sendTelegram(chatId, runnerStartedMessage(handle.meta), { threadId: input.threadId });
+  await upsertRunnerTaskCard({
+    chatId,
+    threadId: input.threadId,
+    activeTask: handle.meta,
+  });
 
   handle.promise
     .then(async (result: Record<string, unknown>) => {
+      const activeTask = sessionStore.getSession(chatId).activeTask;
       runningTasks.delete(chatId);
       runnerProgressState.delete(chatId);
+      try {
+        await upsertRunnerTaskCard({
+          chatId,
+          threadId: input.threadId,
+          activeTask,
+          result,
+        });
+      } catch (error) {
+        log('WARN', 'Failed to update runner task card', error instanceof Error ? error.message : String(error));
+      }
       sessionStore.setLastResult(chatId, result);
       if (result.finalOutput) {
         sessionStore.addHistory(chatId, 'assistant', String(result.finalOutput));
@@ -377,8 +490,26 @@ async function startRunnerForMessage(input: {
       await sendTelegram(chatId, fullMessage, { threadId: input.threadId });
     })
     .catch(async (error: Error) => {
+      const activeTask = sessionStore.getSession(chatId).activeTask;
       runningTasks.delete(chatId);
       runnerProgressState.delete(chatId);
+      if (activeTask) {
+        try {
+          await upsertRunnerTaskCard({
+            chatId,
+            threadId: input.threadId,
+            activeTask,
+            result: {
+              status: 'failed',
+              durationMs: Date.now() - Date.parse(String(activeTask.startedAt || nowIso())),
+              summary: error.message,
+              warnings: activeTask.warnings || [],
+            },
+          });
+        } catch (cardError) {
+          log('WARN', 'Failed to update runner task card', cardError instanceof Error ? cardError.message : String(cardError));
+        }
+      }
       sessionStore.setActiveTask(chatId, null);
       await sendTelegram(chatId, `${input.runner} failed before completion: ${error.message}`, { threadId: input.threadId });
     })
@@ -606,6 +737,56 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   await handleCommand(message, uploads);
 }
 
+async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery): Promise<void> {
+  const chatId = callbackQuery.message?.chat?.id;
+  if (!chatId || String(chatId) !== String(config.GROUP_CHAT_ID)) {
+    if (callbackQuery.id) await answerCallbackQuery(callbackQuery.id);
+    return;
+  }
+
+  const threadId = callbackQuery.message?.message_thread_id;
+  const action = String(callbackQuery.data || '');
+  const auth = sessionStore.ensureAuthorized(callbackQuery.from || {});
+  if (!auth.authorized) {
+    await answerCallbackQuery(callbackQuery.id, 'Not authorized.');
+    return;
+  }
+
+  if (action === 'runner:status') {
+    await answerCallbackQuery(callbackQuery.id, 'Sending status');
+    await sendTelegram(chatId, currentStatusMessage(chatId), { threadId });
+    return;
+  }
+
+  if (action === 'runner:logs') {
+    await answerCallbackQuery(callbackQuery.id, 'Sending runner logs');
+    await sendTelegram(
+      chatId,
+      logsMessage({
+        scope: 'runner',
+        monitorStatus: monitor.getStatus(),
+        session: sessionStore.getSession(chatId),
+      }),
+      { threadId }
+    );
+    return;
+  }
+
+  if (action === 'runner:cancel') {
+    const task = activeTaskHandle(chatId);
+    if (!task) {
+      await answerCallbackQuery(callbackQuery.id, 'No active task');
+      return;
+    }
+    task.cancel();
+    await answerCallbackQuery(callbackQuery.id, 'Cancelling task');
+    await sendTelegram(chatId, 'Task cancellation requested.', { threadId });
+    return;
+  }
+
+  await answerCallbackQuery(callbackQuery.id);
+}
+
 async function pollLoop(): Promise<void> {
   let offset = sessionStore.loadBotState().offset || 0;
 
@@ -629,6 +810,8 @@ async function pollLoop(): Promise<void> {
         sessionStore.saveBotState({ offset });
         if (update.message) {
           await handleMessage(update.message);
+        } else if (update.callback_query) {
+          await handleCallbackQuery(update.callback_query);
         }
       }
     } catch (error) {

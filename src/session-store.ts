@@ -52,6 +52,8 @@ type ActiveTask = {
   statusSummary?: string | null;
   statusDecision?: string | null;
   statusNextStep?: string | null;
+  cardMessageId?: number | null;
+  cardThreadId?: number | null;
   warnings: string[];
 };
 
@@ -70,6 +72,10 @@ type TaskResult = {
   commitSha: string | null;
   changedFiles: string[];
   keptWorktreePath: string | null;
+  lastKnownStage: string | null;
+  lastKnownSummary: string | null;
+  lastKnownDecision: string | null;
+  lastKnownNextStep: string | null;
   warnings: string[];
 };
 
@@ -227,6 +233,15 @@ class SessionStore {
       session.activeTask.statusSummary = progress.statusSummary ? String(progress.statusSummary) : null;
       session.activeTask.statusDecision = progress.statusDecision ? String(progress.statusDecision) : null;
       session.activeTask.statusNextStep = progress.statusNextStep ? String(progress.statusNextStep) : null;
+      return session;
+    });
+  }
+
+  setTaskCard(chatId: string | number, card: { messageId: number | null; threadId?: number | null }): SessionState {
+    return this.updateSession(chatId, (session) => {
+      if (!session.activeTask) return session;
+      session.activeTask.cardMessageId = card.messageId;
+      session.activeTask.cardThreadId = card.threadId ?? null;
       return session;
     });
   }
