@@ -12,7 +12,7 @@ Standalone Telegram bot for monitoring Reserve California campsite availability 
 - Stores per-chat session state, pending uploads, and last runner results on disk
 - Saves photos and documents locally and attaches them to the next runner task
 - Runs Claude and Codex inside isolated git worktrees with auto-commit on successful code changes
-- Constrains the bot and its subprocesses with a dedicated cgroup slice, `nice`/`ionice`, `timeout`, and `prlimit`
+- Constrains the bot and its subprocesses with a dedicated cgroup slice, `nice`/`ionice`, optional `timeout`, and `prlimit`
 - Built-in commands:
   - `/status`
   - `/run-now`
@@ -35,6 +35,10 @@ Standalone Telegram bot for monitoring Reserve California campsite availability 
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_GROUP_CHAT_ID`
    - `TELEGRAM_OWNER_USER_ID`
+   - Optional Reserve California proxy settings:
+     - `RESERVE_CA_USE_CF_PROXY=1`
+     - `RESERVE_CA_CF_PROXY_URL=https://scrape-proxy.ldawoodjee.workers.dev`
+     - `RESERVE_CA_CF_PROXY_SECRET=solefeed-scrape-2026`
 3. Start the bot:
 
 ```bash
@@ -54,7 +58,7 @@ The repo includes host-level files for constrained execution:
 - [`ops/systemd/solefeed-campground.slice`](ops/systemd/solefeed-campground.slice)
 - [`ops/logrotate/campground-telegram-bot`](ops/logrotate/campground-telegram-bot)
 
-The bot wrapper joins a dedicated systemd slice and caps Node heap. Agent subprocesses inherit that slice and add `timeout` + lightweight `prlimit` limits on top. Memory/process containment comes from the dedicated cgroup slice rather than hard `prlimit --as/--nproc` caps, because those broke Bun-based Claude and Node-based Codex on this host. The slice is capped at 4 GB total (`MemoryHigh=3G`, `MemoryMax=4G`). Codex also runs with `workspace-write` sandboxing inside an isolated worktree.
+The bot wrapper joins a dedicated systemd slice and caps Node heap. Agent subprocesses inherit that slice and add optional `timeout` + lightweight `prlimit` limits on top. Memory/process containment comes from the dedicated cgroup slice rather than hard `prlimit --as/--nproc` caps, because those broke Bun-based Claude and Node-based Codex on this host. The slice is capped at 4 GB total (`MemoryHigh=3G`, `MemoryMax=4G`). Codex also runs with `workspace-write` sandboxing inside an isolated worktree.
 
 ## Notes
 
@@ -65,3 +69,6 @@ The bot wrapper joins a dedicated systemd slice and caps Node heap. Agent subpro
 - Successful Claude/Codex edits are committed onto task branches like `tg/2026-03-06-fix-parser-a1b2c3`
 - Failed tasks keep their isolated worktree only if there are uncommitted changes worth inspecting
 - The monitor currently checks the Apr 3-6, 2026 weekend configuration baked into `src/monitor-config.ts`
+- Reserve California checks use the sibling `cfproxy` worker by default; set `RESERVE_CA_USE_CF_PROXY=0` to force direct origin requests
+- Runner timeouts are disabled by default; set `CLAUDE_TIMEOUT_SECONDS` or `CODEX_TIMEOUT_SECONDS` to a non-zero value if you want a hard cap
+- Runner progress now streams every few seconds as output or status changes arrive
