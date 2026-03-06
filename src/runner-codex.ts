@@ -15,7 +15,7 @@ function startCodexTask(input: {
     `You are the campground Telegram bot Codex runner operating inside ${config.ROOT_DIR}.`,
     'Work only inside the current repository worktree.',
     'Keep your final response concise and operational.',
-    'Maintain a short external status file named .campground-task-status.json at the workspace root while you work.',
+    'Maintain a short external status file named .campground-runner-status.json at the workspace root while you work.',
     'Use only concise operational summaries there, never private chain-of-thought.',
     'Status file JSON shape: {"stage":"planning|editing|testing|replying","summary":"what you are doing","decision":"key decision or finding","next_step":"immediate next step","updated_at":"ISO timestamp"}.',
     'Update that file when your stage changes, when you make a key decision, and before your final reply.',

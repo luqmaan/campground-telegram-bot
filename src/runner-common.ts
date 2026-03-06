@@ -51,7 +51,7 @@ type TaskResult = {
   warnings: string[];
 };
 
-const TASK_STATUS_FILE_NAME = '.campground-task-status.json';
+const TASK_STATUS_FILE_NAME = '.campground-runner-status.json';
 type TaskStatusSnapshot = {
   stage: string;
   summary: string;
@@ -175,8 +175,12 @@ function changedFilesSince(cwd: string, baseline: string[]): string[] {
   return current.filter((file) => !baselineSet.has(file));
 }
 
+function taskStatusPath(cwd: string): string {
+  return path.join(cwd, TASK_STATUS_FILE_NAME);
+}
+
 function readTaskStatus(cwd: string): TaskStatusSnapshot | null {
-  const statusFile = path.join(cwd, TASK_STATUS_FILE_NAME);
+  const statusFile = taskStatusPath(cwd);
   if (!fs.existsSync(statusFile)) return null;
   try {
     const raw = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
@@ -316,6 +320,10 @@ function startRunnerTask(options: {
   }
 
   const commandSummary = summarizeCommand(String(commandSpec.command), Array.isArray(commandSpec.args) ? commandSpec.args.map(String) : []);
+  const statusFilePath = taskStatusPath(String(workspace.cwd));
+  try {
+    fs.rmSync(statusFilePath, { force: true });
+  } catch {}
   const baselineChangedFiles = changedFilesSince(String(workspace.cwd), []);
 
   let child;

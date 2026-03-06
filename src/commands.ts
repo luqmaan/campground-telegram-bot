@@ -240,10 +240,47 @@ function logsMessage(input: {
   if (scope === 'all' || scope === 'runner') {
     if (lines.length > 0) lines.push('');
     lines.push('Runner logs');
+
+    const activeTask = input.session.activeTask;
+    if (activeTask) {
+      lines.push(`Active ${activeTask.runner} task since ${activeTask.startedAt}`);
+      if (activeTask.statusStage) {
+        lines.push(`Stage: ${activeTask.statusStage}`);
+      }
+      if (activeTask.statusSummary) {
+        lines.push(`Summary: ${previewText(activeTask.statusSummary, 220)}`);
+      }
+      if (activeTask.statusDecision) {
+        lines.push(`Decision: ${previewText(activeTask.statusDecision, 220)}`);
+      }
+      if (activeTask.statusNextStep) {
+        lines.push(`Next step: ${previewText(activeTask.statusNextStep, 220)}`);
+      }
+      if (Array.isArray(activeTask.changedFiles) && activeTask.changedFiles.length > 0) {
+        lines.push(
+          `Changed files: ${activeTask.changedFiles.join(', ')}${
+            Number(activeTask.changedFileCount) > activeTask.changedFiles.length
+              ? ` (+${Number(activeTask.changedFileCount) - activeTask.changedFiles.length} more)`
+              : ''
+          }`
+        );
+      }
+      if (activeTask.stdoutTail) {
+        lines.push('', 'live stdout tail:', tailText(activeTask.stdoutTail, 1400));
+      }
+      if (activeTask.stderrTail) {
+        lines.push('', 'live stderr tail:', tailText(activeTask.stderrTail, 1200));
+      }
+      if (!activeTask.stdoutTail && !activeTask.stderrTail) {
+        lines.push('No live stdout or stderr yet.');
+      }
+    }
+
     const result = input.session.lastResult;
-    if (!result) {
-      lines.push('No runner task has completed yet.');
-    } else {
+    if (result) {
+      if (activeTask) {
+        lines.push('', 'Last completed runner result');
+      }
       lines.push(`${result.runner} ${result.status} at ${result.finishedAt}`);
       if (result.summary) {
         lines.push(`Summary: ${previewText(result.summary, 220)}`);
@@ -269,6 +306,10 @@ function logsMessage(input: {
       if (result.keptWorktreePath) {
         lines.push('', `kept worktree: ${relativeDisplayPath(result.keptWorktreePath, config.ROOT_DIR)}`);
       }
+    }
+
+    if (!activeTask && !result) {
+      lines.push('No runner task is active and no runner task has completed yet.');
     }
   }
 
