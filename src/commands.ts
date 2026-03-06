@@ -367,7 +367,9 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   const promptPreview = previewText(input.promptPreview, 140) || 'no prompt preview';
   const changedFiles = Array.isArray(input.changedFiles) ? input.changedFiles : [];
   const stdoutChunk = input.stdoutChunk ? String(input.stdoutChunk).trim() : '';
+  const stdoutTail = input.stdoutTail ? String(input.stdoutTail).trim() : '';
   const stderrChunk = input.stderrChunk ? String(input.stderrChunk).trim() : '';
+  const stderrTail = input.stderrTail ? String(input.stderrTail).trim() : '';
   const statusBits = [
     input.statusStage ? `Stage: ${input.statusStage}` : null,
     input.statusSummary ? `Summary: ${previewText(input.statusSummary, 220)}` : null,
@@ -398,8 +400,8 @@ function runnerCardMessage(input: Record<string, unknown>): string {
     );
   }
 
-  const outputPreview = previewLastLines(stdoutChunk, 4, 320);
-  const stderrPreview = previewLastLines(stderrChunk, 4, 320);
+  const outputPreview = previewLastLines(stdoutTail || stdoutChunk, 5, 420) || previewLastLines(stdoutChunk, 5, 420);
+  const stderrPreview = previewLastLines(stderrTail || stderrChunk, 5, 420) || previewLastLines(stderrChunk, 5, 420);
   if (outputPreview) {
     lines.push('Output:');
     lines.push(outputPreview);

@@ -301,7 +301,9 @@ async function upsertRunnerTaskCard(input: {
       input.progress?.changedFileCount ||
       0,
     stdoutChunk: input.progress?.stdoutChunk || '',
+    stdoutTail: input.result?.stdoutTail || input.progress?.stdoutTail || input.activeTask.stdoutTail || '',
     stderrChunk: input.progress?.stderrChunk || '',
+    stderrTail: input.result?.stderrTail || input.progress?.stderrTail || input.activeTask.stderrTail || '',
     summary: input.result?.summary || null,
     commitSha: input.result?.commitSha || null,
     warnings: input.result?.warnings || input.activeTask.warnings || [],
@@ -556,7 +558,9 @@ async function reconcileInterruptedTaskCards(
           0,
         summary: repaired.result.summary || null,
         stdoutChunk: '',
+        stdoutTail: repaired.result.stdoutTail || repaired.activeTask.stdoutTail || '',
         stderrChunk: '',
+        stderrTail: repaired.result.stderrTail || repaired.activeTask.stderrTail || '',
         commitSha: repaired.result.commitSha || null,
         warnings: repaired.result.warnings || repaired.activeTask.warnings || [],
       });
