@@ -38,7 +38,6 @@ const TARGETS = [
   { facilityId: 542, parkName: 'Leo Carrillo SP', facilityName: 'Canyon 25-77', tier: 3 },
   { facilityId: 2031, parkName: 'Point Mugu SP', facilityName: 'Thornhill Broome', tier: 3 },
   { facilityId: 624, parkName: 'Point Mugu SP', facilityName: 'Sycamore Canyon', tier: 3 },
-  { facilityId: 661, parkName: 'San Clemente SB', facilityName: 'RV Campground', tier: 3 },
 ];
 
 const DATE_RANGES = [
