@@ -74,4 +74,7 @@ module.exports = {
   MONITOR_LOCK_FILE: path.join(DATA_DIR, 'monitor-lock.json'),
   AUTH_STATE_FILE: path.join(DATA_DIR, 'auth.json'),
   BOT_STATE_FILE: path.join(DATA_DIR, 'bot-state.json'),
+  DEPLOY_STATE_FILE: path.join(DATA_DIR, 'deploy-state.json'),
+  DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main',
+  PM2_APP_NAME: process.env.PM2_APP_NAME || 'bilal69-bot',
 };

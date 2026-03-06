@@ -13,6 +13,7 @@ const {
   usersMessage,
 } = require('./commands.ts');
 const { extractMessageUploads } = require('./media.ts');
+const { applyRef, deployStatusMessage, repoSummary, scheduleDeploy, shouldDeployFiles } = require('./repo-actions.ts');
 const { startClaudeTask } = require('./runner-claude.ts');
 const { startCodexTask } = require('./runner-codex.ts');
 const { ensureDir, nowIso, previewText, sanitizeText } = require('./utils.ts');
@@ -82,9 +83,17 @@ function activeTaskHandle(chatId: string | number): Record<string, unknown> | un
 function currentStatusMessage(chatId: string | number): string {
   return statusMessage({
     monitorStatus: monitor.getStatus(),
-    session: sessionStore.getSession(chatId),
+    session: {
+      ...sessionStore.getSession(chatId),
+      repoStatus: repoSummary(),
+      deployStatus: deployStatusMessage(),
+    },
     manualRunActive: Boolean(manualRunPromise),
   });
+}
+
+function hasBlockingActivity(): boolean {
+  return runningTasks.size > 0 || Boolean(manualRunPromise);
 }
 
 async function startManualRun(chatId: string | number, threadId: number | null | undefined): Promise<void> {
@@ -168,7 +177,28 @@ async function startRunnerForMessage(input: {
       if (result.finalOutput) {
         sessionStore.addHistory(chatId, 'assistant', String(result.finalOutput));
       }
-      await sendTelegram(chatId, runnerResultMessage(result, config.ROOT_DIR), { threadId: input.threadId });
+
+      const followups: string[] = [];
+      if (result.status === 'completed' && result.commitSha) {
+        try {
+          const applyResult = applyRef(String(result.commitSha), result);
+          followups.push(String(applyResult.message));
+          if (!applyResult.noop && shouldDeployFiles(Array.isArray(result.changedFiles) ? result.changedFiles : [])) {
+            const deployResult = scheduleDeploy(`${sender} via ${input.runner}`, String(result.commitSha));
+            followups.push(String(deployResult.message));
+          } else if (Array.isArray(result.changedFiles) && result.changedFiles.length > 0) {
+            followups.push('No deploy was needed because the changes do not affect the live runtime.');
+          }
+        } catch (error) {
+          followups.push(`Auto-apply failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else if (result.status === 'completed' && Array.isArray(result.changedFiles) && result.changedFiles.length > 0 && !result.commitSha) {
+        followups.push('Changes were produced but not auto-applied because no task commit was created.');
+      }
+
+      const resultMessage = runnerResultMessage(result, config.ROOT_DIR);
+      const fullMessage = followups.length > 0 ? `${resultMessage}\n\n${followups.join('\n')}` : resultMessage;
+      await sendTelegram(chatId, fullMessage, { threadId: input.threadId });
     })
     .catch(async (error: Error) => {
       runningTasks.delete(chatId);
@@ -286,6 +316,35 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
     }
     task.cancel();
     await sendTelegram(chatId, 'Task cancellation requested.', { threadId });
+    return;
+  }
+
+  if (command.type === 'apply') {
+    if (hasBlockingActivity()) {
+      await sendTelegram(chatId, 'Cannot /apply while a runner task or manual monitor run is active.', { threadId });
+      return;
+    }
+    try {
+      const result = applyRef(String(command.ref || ''), sessionStore.getSession(chatId).lastResult || null);
+      await sendTelegram(chatId, String(result.message), { threadId });
+    } catch (error) {
+      await sendTelegram(chatId, `Apply failed: ${error instanceof Error ? error.message : String(error)}`, { threadId });
+    }
+    return;
+  }
+
+  if (command.type === 'deploy') {
+    if (hasBlockingActivity()) {
+      await sendTelegram(chatId, 'Cannot /deploy while a runner task or manual monitor run is active.', { threadId });
+      return;
+    }
+    try {
+      const requestedBy = displayName(profileFromTelegramUser(message.from || {}));
+      const result = scheduleDeploy(requestedBy, sessionStore.getSession(chatId).lastResult?.commitSha || null);
+      await sendTelegram(chatId, String(result.message), { threadId });
+    } catch (error) {
+      await sendTelegram(chatId, `Deploy scheduling failed: ${error instanceof Error ? error.message : String(error)}`, { threadId });
+    }
     return;
   }
 

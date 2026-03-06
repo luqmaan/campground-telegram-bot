@@ -19,6 +19,8 @@ function parseCommand(rawText: string): Record<string, unknown> {
     if (name === 'users') return { type: 'users' };
     if (name === 'forget' || name === 'clear' || name === 'reset') return { type: 'forget' };
     if (name === 'cancel') return { type: 'cancel' };
+    if (name === 'apply') return { type: 'apply', ref: arg };
+    if (name === 'deploy') return { type: 'deploy' };
     if (name === 'logs') return { type: 'logs', scope: arg || 'all' };
     if (name === 'claude') return { type: 'runner', runner: 'claude', prompt: arg };
     if (name === 'codex') return { type: 'runner', runner: 'codex', prompt: arg };
@@ -38,6 +40,8 @@ function parseCommand(rawText: string): Record<string, unknown> {
   }
   if (/^(forget|clear|reset)$/.test(lower)) return { type: 'forget' };
   if (/^cancel(?:\s+(claude|codex))?$/.test(lower)) return { type: 'cancel' };
+  if (/^apply(?:\s+.+)?$/.test(lower)) return { type: 'apply', ref: text.slice(5).trim() };
+  if (/^deploy$/.test(lower)) return { type: 'deploy' };
   if (lower.startsWith('claude ')) return { type: 'runner', runner: 'claude', prompt: text.slice(7).trim() };
   if (lower.startsWith('codex ')) return { type: 'runner', runner: 'codex', prompt: text.slice(6).trim() };
   return { type: 'runner', runner: 'claude', prompt: text };
@@ -55,9 +59,13 @@ function helpMessage(): string {
     '/users',
     '/forget',
     '/cancel',
+    '/apply [commit-or-branch]',
+    '/deploy',
     '/claude <task>',
     '/codex <task>',
     '',
+    'Successful code changes are auto-applied to main.',
+    'Runtime-affecting changes are auto-deployed after apply.',
     'Plain text defaults to Claude.',
     'Uploads with no text are queued for the next Claude or Codex task.',
   ].join('\n');
@@ -101,6 +109,12 @@ function statusMessage(input: {
   }
 
   lines.push(`Pending uploads: ${Array.isArray(session.pendingUploads) ? session.pendingUploads.length : 0}`);
+  if (session.repoStatus?.branch && session.repoStatus?.head) {
+    lines.push(`Repo: ${session.repoStatus.branch} @ ${session.repoStatus.head}${session.repoStatus.clean ? '' : ' (dirty)'}`);
+  }
+  if (session.deployStatus) {
+    lines.push(String(session.deployStatus));
+  }
 
   if (session.lastResult) {
     lines.push(

@@ -8,6 +8,6 @@
   },
   "scripts": {
     "start": "node src/bot.ts",
-    "check": "node scripts/check.ts src/bot.ts src/commands.ts src/config.ts src/media.ts src/monitor.ts src/monitor-config.ts src/runner-claude.ts src/runner-codex.ts src/runner-common.ts src/session-store.ts src/utils.ts && bash -n bin/run-bot.sh && bash -n bin/run-agent.sh"
+    "check": "node scripts/check.ts src/bot.ts src/commands.ts src/config.ts src/media.ts src/monitor.ts src/monitor-config.ts src/repo-actions.ts src/runner-claude.ts src/runner-codex.ts src/runner-common.ts src/session-store.ts src/utils.ts scripts/deploy.ts && bash -n bin/run-bot.sh && bash -n bin/run-agent.sh"
   }
 }
