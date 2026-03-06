@@ -36,7 +36,7 @@ function startCodexTask(input: {
     timeoutSeconds: config.CODEX_TIMEOUT_SECONDS,
     onProgress: input.onProgress,
     buildCommand: (context: Record<string, unknown>) => {
-      const args = ['-C', String(context.cwd), '-a', 'never', '-s', 'workspace-write', '--ephemeral'];
+      const args = ['-a', 'never', '-C', String(context.cwd)];
       if (config.CODEX_MODEL) {
         args.push('-m', config.CODEX_MODEL);
       }
@@ -45,7 +45,7 @@ function startCodexTask(input: {
           args.push('-i', String(upload.localPath));
         }
       }
-      args.push('exec', '--color', 'never');
+      args.push('exec', '-s', 'workspace-write', '--ephemeral', '--color', 'never');
       return {
         command: 'codex',
         args,

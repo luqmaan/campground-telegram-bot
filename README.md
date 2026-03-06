@@ -54,7 +54,7 @@ The repo includes host-level files for constrained execution:
 - [`ops/systemd/solefeed-campground.slice`](ops/systemd/solefeed-campground.slice)
 - [`ops/logrotate/campground-telegram-bot`](ops/logrotate/campground-telegram-bot)
 
-The bot wrapper joins a dedicated systemd slice and caps Node heap. Agent subprocesses inherit that slice and add `timeout` + `prlimit` limits on top. Codex also runs with `workspace-write` sandboxing inside an isolated worktree.
+The bot wrapper joins a dedicated systemd slice and caps Node heap. Agent subprocesses inherit that slice and add `timeout` + lightweight `prlimit` limits on top. Memory/process containment comes from the dedicated cgroup slice rather than hard `prlimit --as/--nproc` caps, because those broke Bun-based Claude and Node-based Codex on this host. The slice is capped at 4 GB total (`MemoryHigh=3G`, `MemoryMax=4G`). Codex also runs with `workspace-write` sandboxing inside an isolated worktree.
 
 ## Notes
 
