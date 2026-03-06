@@ -1,0 +1,13 @@
+{
+  "name": "campground-telegram-bot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Standalone Telegram bot for California campground monitoring",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/bot.js",
+    "check": "node --check src/bot.js && node --check src/monitor.js && node --check src/config.js && node --check src/monitor-config.js"
+  }
+}
