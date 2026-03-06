@@ -44,10 +44,21 @@ type TaskResult = {
   commitSha: string | null;
   changedFiles: string[];
   keptWorktreePath: string | null;
+  lastKnownStage: string | null;
+  lastKnownSummary: string | null;
+  lastKnownDecision: string | null;
+  lastKnownNextStep: string | null;
   warnings: string[];
 };
 
 const TASK_STATUS_FILE_NAME = '.campground-task-status.json';
+type TaskStatusSnapshot = {
+  stage: string;
+  summary: string;
+  decision: string;
+  nextStep: string;
+  updatedAt: string;
+};
 
 function runCommand(command: string, args: string[], cwd = config.ROOT_DIR): string {
   const result = spawnSync(command, args, {
@@ -80,11 +91,6 @@ function repoSupportsIsolatedWorktree(): { allowed: boolean; warnings: string[] 
   const branch = tryRunCommand('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
   if (!branch.ok || !branch.stdout || branch.stdout === 'HEAD') {
     warnings.push('Repo is not on a normal branch, so auto-branching is disabled.');
-    return { allowed: false, warnings };
-  }
-  const status = tryRunCommand('git', ['status', '--porcelain', '--untracked-files=no']);
-  if (!status.ok || status.stdout) {
-    warnings.push('Repo has local tracked changes, so auto-branching is disabled.');
     return { allowed: false, warnings };
   }
   return { allowed: true, warnings };
@@ -169,7 +175,7 @@ function changedFilesSince(cwd: string, baseline: string[]): string[] {
   return current.filter((file) => !baselineSet.has(file));
 }
 
-function readTaskStatus(cwd: string): Record<string, unknown> | null {
+function readTaskStatus(cwd: string): TaskStatusSnapshot | null {
   const statusFile = path.join(cwd, TASK_STATUS_FILE_NAME);
   if (!fs.existsSync(statusFile)) return null;
   try {
@@ -199,9 +205,44 @@ function commitChanges(cwd: string, runner: RunnerName, slug: string): { commitS
   return { commitSha, changedFiles };
 }
 
-function buildSummary(status: string, stdout: string, stderr: string): string {
-  const source = status === 'completed' ? stdout || stderr : stderr || stdout;
-  return previewText(source, config.RUNNER_SUMMARY_CHARS) || `${status} with no output`;
+function formatTaskStatusSummary(taskStatus: TaskStatusSnapshot | null): string {
+  if (!taskStatus) return '';
+  const parts = [
+    taskStatus.stage ? `Last stage: ${taskStatus.stage}.` : '',
+    taskStatus.summary ? `Last summary: ${taskStatus.summary}.` : '',
+    taskStatus.decision ? `Last decision: ${taskStatus.decision}.` : '',
+    taskStatus.nextStep ? `Last next step: ${taskStatus.nextStep}.` : '',
+  ].filter(Boolean);
+  return parts.join(' ');
+}
+
+function buildSummary(
+  status: TaskResult['status'],
+  stdout: string,
+  stderr: string,
+  taskStatus: TaskStatusSnapshot | null,
+  durationMs: number
+): string {
+  if (status === 'completed') {
+    const source = stdout || stderr || taskStatus?.summary || taskStatus?.decision || taskStatus?.nextStep || '';
+    return previewText(source, config.RUNNER_SUMMARY_CHARS) || 'Completed.';
+  }
+
+  const prefix =
+    status === 'timeout'
+      ? `Timed out after ${formatDuration(durationMs)}.`
+      : status === 'cancelled'
+        ? `Cancelled after ${formatDuration(durationMs)}.`
+        : `Failed after ${formatDuration(durationMs)}.`;
+  const details = [
+    formatTaskStatusSummary(taskStatus),
+    previewText(stderr || stdout, Math.max(120, Math.floor(config.RUNNER_SUMMARY_CHARS / 2)))
+      ? `Last output: ${previewText(stderr || stdout, Math.max(120, Math.floor(config.RUNNER_SUMMARY_CHARS / 2)))}.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return previewText(`${prefix}${details ? ` ${details}` : ''}`, config.RUNNER_SUMMARY_CHARS) || prefix;
 }
 
 function startRunnerTask(options: {
@@ -265,6 +306,10 @@ function startRunnerTask(options: {
         commitSha: null,
         changedFiles: [],
         keptWorktreePath: null,
+        lastKnownStage: null,
+        lastKnownSummary: null,
+        lastKnownDecision: null,
+        lastKnownNextStep: null,
         warnings,
       }),
     };
@@ -317,6 +362,10 @@ function startRunnerTask(options: {
         commitSha: null,
         changedFiles: [],
         keptWorktreePath: null,
+        lastKnownStage: null,
+        lastKnownSummary: null,
+        lastKnownDecision: null,
+        lastKnownNextStep: null,
         warnings,
       }),
     };
@@ -327,21 +376,66 @@ function startRunnerTask(options: {
   let cancelled = false;
   let stdout = '';
   let stderr = '';
+  let stdoutReportedLength = 0;
+  let stderrReportedLength = 0;
   let progressTimer: ReturnType<typeof setInterval> | null = null;
-  let lastProgressSignature = '';
+  let lastProgressStateSignature = '';
+  let lastProgressSentAt = 0;
+  let lastChangeAt = Date.now();
+  let progressEventId = 0;
 
   child.stdout.on('data', (chunk: Buffer) => {
     stdout = appendCapped(stdout, chunk.toString());
+    lastChangeAt = Date.now();
   });
   child.stderr.on('data', (chunk: Buffer) => {
     stderr = appendCapped(stderr, chunk.toString());
+    lastChangeAt = Date.now();
   });
 
   if (options.onProgress) {
-    progressTimer = setInterval(() => {
+    const sendProgress = (heartbeat = false): void => {
       const changedFiles = changedFilesSince(String(workspace.cwd), baselineChangedFiles);
       const taskStatus = readTaskStatus(String(workspace.cwd));
+      const stdoutChunkRaw = stripAnsi(stdout.slice(stdoutReportedLength));
+      const stderrChunkRaw = stripAnsi(stderr.slice(stderrReportedLength));
+      const stdoutChunk =
+        stdoutChunkRaw.length > config.RUNNER_PROGRESS_OUTPUT_CHARS
+          ? `...[trimmed]\n${stdoutChunkRaw.slice(-config.RUNNER_PROGRESS_OUTPUT_CHARS)}`
+          : stdoutChunkRaw;
+      const stderrChunk =
+        stderrChunkRaw.length > config.RUNNER_PROGRESS_OUTPUT_CHARS
+          ? `...[trimmed]\n${stderrChunkRaw.slice(-config.RUNNER_PROGRESS_OUTPUT_CHARS)}`
+          : stderrChunkRaw;
+      const stateSignature = [
+        stdout.length,
+        stderr.length,
+        changedFiles.join(','),
+        changedFiles.length,
+        taskStatus?.stage || '',
+        taskStatus?.summary || '',
+        taskStatus?.decision || '',
+        taskStatus?.nextStep || '',
+      ].join('|');
+      const hasVisibleChange = stateSignature !== lastProgressStateSignature;
+      const idleForMs = Date.now() - lastChangeAt;
+      const shouldEmitHeartbeat =
+        heartbeat &&
+        !hasVisibleChange &&
+        Date.now() - lastProgressSentAt >= config.RUNNER_IDLE_PROGRESS_INTERVAL_MS;
+
+      if (!hasVisibleChange && !shouldEmitHeartbeat) return;
+
+      stdoutReportedLength = stdout.length;
+      stderrReportedLength = stderr.length;
+      lastProgressStateSignature = stateSignature;
+      lastProgressSentAt = Date.now();
+      progressEventId += 1;
+
       const progress = {
+        eventId: progressEventId,
+        heartbeat: shouldEmitHeartbeat,
+        idleMs: idleForMs,
         runner: options.runner,
         taskId,
         elapsedMs: Date.now() - startedAt,
@@ -351,6 +445,8 @@ function startRunnerTask(options: {
         commandSummary,
         changedFiles: changedFiles.slice(0, 6),
         changedFileCount: changedFiles.length,
+        stdoutChunk,
+        stderrChunk,
         stdoutTail: tailText(stripAnsi(stdout), 500),
         stderrTail: tailText(stripAnsi(stderr), 500),
         statusStage: taskStatus?.stage || null,
@@ -358,12 +454,11 @@ function startRunnerTask(options: {
         statusDecision: taskStatus?.decision || null,
         statusNextStep: taskStatus?.nextStep || null,
       };
-      const signature = `${progress.stdoutTail}|${progress.stderrTail}|${progress.changedFiles.join(',')}|${progress.changedFileCount}|${progress.statusStage}|${progress.statusSummary}|${progress.statusDecision}|${progress.statusNextStep}|${Math.floor(
-        Number(progress.elapsedMs) / 1000
-      )}`;
-      if (signature === lastProgressSignature) return;
-      lastProgressSignature = signature;
       void Promise.resolve(options.onProgress?.(progress)).catch(() => {});
+    };
+
+    progressTimer = setInterval(() => {
+      sendProgress(true);
     }, config.RUNNER_PROGRESS_INTERVAL_MS);
   }
 
@@ -375,6 +470,7 @@ function startRunnerTask(options: {
 
       const stdoutClean = stripAnsi(stdout).trim();
       const stderrClean = stripAnsi(stderr).trim();
+      const finalTaskStatus = readTaskStatus(String(workspace.cwd));
       const warnings = [...(Array.isArray(workspace.warnings) ? workspace.warnings : []), ...extraWarnings];
       let commitSha: string | null = null;
       let changedFiles: string[] = [];
@@ -401,13 +497,15 @@ function startRunnerTask(options: {
           warnings.push(...cleanupIsolatedWorkspace(workspace, true));
           resultBranchName = null;
         }
+      } else {
+        changedFiles = changedFilesSince(String(workspace.cwd), baselineChangedFiles);
       }
 
       const result: TaskResult = {
         id: taskId,
         runner: options.runner,
         status,
-        summary: buildSummary(status, stdoutClean, stderrClean),
+        summary: buildSummary(status, stdoutClean, stderrClean, finalTaskStatus, Date.now() - startedAt),
         finalOutput: stdoutClean ? tailText(stdoutClean, config.RUNNER_FINAL_MESSAGE_CHARS) : null,
         startedAt: startedAtIso,
         finishedAt: nowIso(),
@@ -418,12 +516,12 @@ function startRunnerTask(options: {
         commitSha,
         changedFiles,
         keptWorktreePath,
+        lastKnownStage: finalTaskStatus?.stage || null,
+        lastKnownSummary: finalTaskStatus?.summary || null,
+        lastKnownDecision: finalTaskStatus?.decision || null,
+        lastKnownNextStep: finalTaskStatus?.nextStep || null,
         warnings,
       };
-
-      if (status === 'timeout' && !result.summary) {
-        result.summary = `${options.runner} timed out after ${formatDuration(Date.now() - startedAt)}.`;
-      }
       return result;
     };
 
