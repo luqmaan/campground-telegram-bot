@@ -2,6 +2,25 @@ const config = require('./config.ts');
 const { formatDuration, formatSince, previewLastLines, previewText, relativeDisplayPath, sanitizeText, tailText } = require('./utils.ts');
 const { displayName } = require('./session-store.ts');
 
+function runnerStatusEmoji(status: unknown): string {
+  const value = String(status || '').toLowerCase();
+  if (value === 'running') return '🟡';
+  if (value === 'completed') return '✅';
+  if (value === 'failed') return '❌';
+  if (value === 'cancelled') return '🛑';
+  if (value === 'timeout') return '⏱️';
+  return 'ℹ️';
+}
+
+function stageEmoji(stage: unknown): string {
+  const value = String(stage || '').toLowerCase();
+  if (value === 'planning') return '🧭';
+  if (value === 'editing') return '✍️';
+  if (value === 'testing') return '🧪';
+  if (value === 'replying') return '💬';
+  return 'ℹ️';
+}
+
 function parseCommand(rawText: string): Record<string, unknown> {
   const text = sanitizeText(rawText);
   if (!text) return { type: 'empty' };
@@ -79,6 +98,7 @@ function helpMessage(): string {
     'Successful code changes are auto-applied to main.',
     'Runtime-affecting changes are auto-deployed after apply.',
     'Plain text defaults to Claude.',
+    'Reply to a task card to keep talking to that specific Claude or Codex agent.',
     'Uploads with no text are queued for the next Claude or Codex task.',
   ].join('\n');
 }
@@ -103,6 +123,7 @@ function statusMessage(input: {
     `Scheduler: ${monitorStatus.schedulerEnabled ? 'running' : 'paused'}`,
     `Manual run: ${input.manualRunActive ? 'active' : 'idle'}`,
   ];
+  const activeTasks = Array.isArray(session.activeTasks) ? session.activeTasks : session.activeTask ? [session.activeTask] : [];
 
   if (monitorStatus.activeRun) {
     const progressBits: string[] = [];
@@ -140,25 +161,29 @@ function statusMessage(input: {
     lines.push(`Last error: ${monitorStatus.lastError}`);
   }
 
+  if (activeTasks.length > 1) {
+    lines.push(`Active agent tasks: ${activeTasks.length}`);
+  }
+
   if (session.activeTask) {
-    lines.push(`Active agent task: ${session.activeTask.runner} since ${session.activeTask.startedAt}`);
+    lines.push(`${runnerStatusEmoji('running')} Active agent task: ${session.activeTask.runner} since ${session.activeTask.startedAt}`);
     if (session.activeTask.statusStage) {
-      lines.push(`Agent stage: ${session.activeTask.statusStage}`);
+      lines.push(`${stageEmoji(session.activeTask.statusStage)} Agent stage: ${session.activeTask.statusStage}`);
     }
     if (session.activeTask.statusSummary) {
-      lines.push(`Agent summary: ${session.activeTask.statusSummary}`);
+      lines.push(`📝 Agent summary: ${session.activeTask.statusSummary}`);
     }
     if (session.activeTask.statusHypothesis) {
-      lines.push(`Agent hypothesis: ${session.activeTask.statusHypothesis}`);
+      lines.push(`💭 Agent hypothesis: ${session.activeTask.statusHypothesis}`);
     }
     if (session.activeTask.statusEvidence) {
-      lines.push(`Agent evidence: ${session.activeTask.statusEvidence}`);
+      lines.push(`🔎 Agent evidence: ${session.activeTask.statusEvidence}`);
     }
     if (session.activeTask.statusDecision) {
-      lines.push(`Agent decision: ${session.activeTask.statusDecision}`);
+      lines.push(`⚖️ Agent decision: ${session.activeTask.statusDecision}`);
     }
     if (session.activeTask.statusNextStep) {
-      lines.push(`Agent next step: ${session.activeTask.statusNextStep}`);
+      lines.push(`➡️ Agent next step: ${session.activeTask.statusNextStep}`);
     }
     if (session.activeTask.branchName) {
       lines.push(`Agent branch: ${session.activeTask.branchName}`);
@@ -201,22 +226,22 @@ function statusMessage(input: {
 
   if (session.lastResult) {
     lines.push(
-      `Last agent result: ${session.lastResult.runner} ${session.lastResult.status} ${session.lastResult.finishedAt} (${formatDuration(session.lastResult.durationMs)})`
+      `${runnerStatusEmoji(session.lastResult.status)} Last agent result: ${session.lastResult.runner} ${session.lastResult.status} ${session.lastResult.finishedAt} (${formatDuration(session.lastResult.durationMs)})`
     );
     if (session.lastResult.summary) {
-      lines.push(`Summary: ${previewText(session.lastResult.summary, 180)}`);
+      lines.push(`📝 Summary: ${previewText(session.lastResult.summary, 180)}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownStage) {
-      lines.push(`Last stage: ${session.lastResult.lastKnownStage}`);
+      lines.push(`${stageEmoji(session.lastResult.lastKnownStage)} Last stage: ${session.lastResult.lastKnownStage}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownSummary) {
-      lines.push(`Last summary: ${previewText(session.lastResult.lastKnownSummary, 180)}`);
+      lines.push(`📝 Last summary: ${previewText(session.lastResult.lastKnownSummary, 180)}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownHypothesis) {
-      lines.push(`Last hypothesis: ${previewText(session.lastResult.lastKnownHypothesis, 180)}`);
+      lines.push(`💭 Last hypothesis: ${previewText(session.lastResult.lastKnownHypothesis, 180)}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownEvidence) {
-      lines.push(`Last evidence: ${previewText(session.lastResult.lastKnownEvidence, 180)}`);
+      lines.push(`🔎 Last evidence: ${previewText(session.lastResult.lastKnownEvidence, 180)}`);
     }
   }
 
@@ -252,27 +277,31 @@ function logsMessage(input: {
   if (scope === 'all' || scope === 'runner') {
     if (lines.length > 0) lines.push('');
     lines.push('Runner logs');
+    const activeTasks = Array.isArray(input.session.activeTasks) ? input.session.activeTasks : input.session.activeTask ? [input.session.activeTask] : [];
+    if (activeTasks.length > 1) {
+      lines.push(`Active agent tasks: ${activeTasks.length}`);
+    }
 
     const activeTask = input.session.activeTask;
     if (activeTask) {
-      lines.push(`Active ${activeTask.runner} task since ${activeTask.startedAt}`);
+      lines.push(`${runnerStatusEmoji('running')} Active ${activeTask.runner} task since ${activeTask.startedAt}`);
       if (activeTask.statusStage) {
-        lines.push(`Stage: ${activeTask.statusStage}`);
+        lines.push(`${stageEmoji(activeTask.statusStage)} Stage: ${activeTask.statusStage}`);
       }
       if (activeTask.statusSummary) {
-        lines.push(`Summary: ${previewText(activeTask.statusSummary, 220)}`);
+        lines.push(`📝 Summary: ${previewText(activeTask.statusSummary, 220)}`);
       }
       if (activeTask.statusHypothesis) {
-        lines.push(`Hypothesis: ${previewText(activeTask.statusHypothesis, 220)}`);
+        lines.push(`💭 Hypothesis: ${previewText(activeTask.statusHypothesis, 220)}`);
       }
       if (activeTask.statusEvidence) {
-        lines.push(`Evidence: ${previewText(activeTask.statusEvidence, 220)}`);
+        lines.push(`🔎 Evidence: ${previewText(activeTask.statusEvidence, 220)}`);
       }
       if (activeTask.statusDecision) {
-        lines.push(`Decision: ${previewText(activeTask.statusDecision, 220)}`);
+        lines.push(`⚖️ Decision: ${previewText(activeTask.statusDecision, 220)}`);
       }
       if (activeTask.statusNextStep) {
-        lines.push(`Next step: ${previewText(activeTask.statusNextStep, 220)}`);
+        lines.push(`➡️ Next step: ${previewText(activeTask.statusNextStep, 220)}`);
       }
       if (Array.isArray(activeTask.changedFiles) && activeTask.changedFiles.length > 0) {
         lines.push(
@@ -284,10 +313,10 @@ function logsMessage(input: {
         );
       }
       if (activeTask.stdoutTail) {
-        lines.push('', 'live stdout tail:', tailText(activeTask.stdoutTail, 1400));
+        lines.push('', '📤 live stdout tail:', tailText(activeTask.stdoutTail, 1400));
       }
       if (activeTask.stderrTail) {
-        lines.push('', 'live stderr tail:', tailText(activeTask.stderrTail, 1200));
+        lines.push('', '⚠️ live stderr tail:', tailText(activeTask.stderrTail, 1200));
       }
       if (!activeTask.stdoutTail && !activeTask.stderrTail) {
         lines.push('No live stdout or stderr yet.');
@@ -299,33 +328,33 @@ function logsMessage(input: {
       if (activeTask) {
         lines.push('', 'Last completed runner result');
       }
-      lines.push(`${result.runner} ${result.status} at ${result.finishedAt}`);
+      lines.push(`${runnerStatusEmoji(result.status)} ${result.runner} ${result.status} at ${result.finishedAt}`);
       if (result.summary) {
-        lines.push(`Summary: ${previewText(result.summary, 220)}`);
+        lines.push(`📝 Summary: ${previewText(result.summary, 220)}`);
       }
       if (result.lastKnownStage) {
-        lines.push(`Last stage: ${result.lastKnownStage}`);
+        lines.push(`${stageEmoji(result.lastKnownStage)} Last stage: ${result.lastKnownStage}`);
       }
       if (result.lastKnownSummary) {
-        lines.push(`Last summary: ${previewText(result.lastKnownSummary, 220)}`);
+        lines.push(`📝 Last summary: ${previewText(result.lastKnownSummary, 220)}`);
       }
       if (result.lastKnownHypothesis) {
-        lines.push(`Last hypothesis: ${previewText(result.lastKnownHypothesis, 220)}`);
+        lines.push(`💭 Last hypothesis: ${previewText(result.lastKnownHypothesis, 220)}`);
       }
       if (result.lastKnownEvidence) {
-        lines.push(`Last evidence: ${previewText(result.lastKnownEvidence, 220)}`);
+        lines.push(`🔎 Last evidence: ${previewText(result.lastKnownEvidence, 220)}`);
       }
       if (result.lastKnownDecision) {
-        lines.push(`Last decision: ${previewText(result.lastKnownDecision, 220)}`);
+        lines.push(`⚖️ Last decision: ${previewText(result.lastKnownDecision, 220)}`);
       }
       if (result.lastKnownNextStep) {
-        lines.push(`Last next step: ${previewText(result.lastKnownNextStep, 220)}`);
+        lines.push(`➡️ Last next step: ${previewText(result.lastKnownNextStep, 220)}`);
       }
       if (result.stdoutTail) {
-        lines.push('', 'stdout tail:', tailText(result.stdoutTail, 1400));
+        lines.push('', '📤 stdout tail:', tailText(result.stdoutTail, 1400));
       }
       if (result.stderrTail) {
-        lines.push('', 'stderr tail:', tailText(result.stderrTail, 1200));
+        lines.push('', '⚠️ stderr tail:', tailText(result.stderrTail, 1200));
       }
       if (result.keptWorktreePath) {
         lines.push('', `kept worktree: ${relativeDisplayPath(result.keptWorktreePath, config.ROOT_DIR)}`);
@@ -371,16 +400,16 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   const stderrChunk = input.stderrChunk ? String(input.stderrChunk).trim() : '';
   const stderrTail = input.stderrTail ? String(input.stderrTail).trim() : '';
   const statusBits = [
-    input.statusStage ? `Stage: ${input.statusStage}` : null,
-    input.statusSummary ? `Summary: ${previewText(input.statusSummary, 220)}` : null,
-    input.statusHypothesis ? `Hypothesis: ${previewText(input.statusHypothesis, 220)}` : null,
-    input.statusEvidence ? `Evidence: ${previewText(input.statusEvidence, 220)}` : null,
-    input.statusDecision ? `Decision: ${previewText(input.statusDecision, 220)}` : null,
-    input.statusNextStep ? `Next: ${previewText(input.statusNextStep, 220)}` : null,
+    input.statusStage ? `${stageEmoji(input.statusStage)} Stage: ${input.statusStage}` : null,
+    input.statusSummary ? `📝 Summary: ${previewText(input.statusSummary, 220)}` : null,
+    input.statusHypothesis ? `💭 Hypothesis: ${previewText(input.statusHypothesis, 220)}` : null,
+    input.statusEvidence ? `🔎 Evidence: ${previewText(input.statusEvidence, 220)}` : null,
+    input.statusDecision ? `⚖️ Decision: ${previewText(input.statusDecision, 220)}` : null,
+    input.statusNextStep ? `➡️ Next: ${previewText(input.statusNextStep, 220)}` : null,
   ].filter(Boolean);
 
   const lines = [
-    `${runner} ${status === 'running' ? 'running' : status} ${
+    `${runnerStatusEmoji(status)} ${runner} ${status === 'running' ? 'running' : status} ${
       status === 'running' ? `for ${formatDuration(Number(input.elapsedMs) || 0)}` : `in ${formatDuration(Number(input.durationMs) || 0)}`
     }.`,
     `Task: ${promptPreview}`,
@@ -400,18 +429,18 @@ function runnerCardMessage(input: Record<string, unknown>): string {
     );
   }
 
-  const outputPreview = previewLastLines(stdoutTail || stdoutChunk, 5, 420) || previewLastLines(stdoutChunk, 5, 420);
-  const stderrPreview = previewLastLines(stderrTail || stderrChunk, 5, 420) || previewLastLines(stderrChunk, 5, 420);
+  const outputPreview = previewLastLines(stdoutTail || stdoutChunk, 8, 700) || previewLastLines(stdoutChunk, 8, 700);
+  const stderrPreview = previewLastLines(stderrTail || stderrChunk, 6, 600) || previewLastLines(stderrChunk, 6, 600);
   if (outputPreview) {
-    lines.push('Output:');
+    lines.push('📤 Output:');
     lines.push(outputPreview);
   } else if (stderrPreview) {
-    lines.push('stderr:');
+    lines.push('⚠️ stderr:');
     lines.push(stderrPreview);
   }
 
   if (status !== 'running' && input.summary) {
-    lines.push(`Summary: ${previewText(input.summary, 260)}`);
+    lines.push(`📝 Summary: ${previewText(input.summary, 260)}`);
   }
 
   if (status !== 'running' && input.commitSha) {
@@ -419,7 +448,7 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   }
 
   if (status !== 'running' && Array.isArray(input.warnings) && input.warnings.length > 0) {
-    lines.push(`Warnings: ${input.warnings.join(' | ')}`);
+    lines.push(`⚠️ Warnings: ${input.warnings.join(' | ')}`);
   }
 
   lines.push(status === 'running' ? 'Use the buttons below or /status for details.' : 'Use the buttons below or /logs runner for details.');
@@ -465,15 +494,15 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
   const stdoutChunk = progress.stdoutChunk ? String(progress.stdoutChunk).trim() : '';
   const stderrChunk = progress.stderrChunk ? String(progress.stderrChunk).trim() : '';
   const statusBits = [
-    progress.statusStage ? `Stage: ${progress.statusStage}` : null,
-    progress.statusSummary ? `Summary: ${previewText(progress.statusSummary, 220)}` : null,
-    progress.statusHypothesis ? `Hypothesis: ${previewText(progress.statusHypothesis, 220)}` : null,
-    progress.statusEvidence ? `Evidence: ${previewText(progress.statusEvidence, 220)}` : null,
-    progress.statusDecision ? `Decision: ${previewText(progress.statusDecision, 220)}` : null,
-    progress.statusNextStep ? `Next: ${previewText(progress.statusNextStep, 220)}` : null,
+    progress.statusStage ? `${stageEmoji(progress.statusStage)} Stage: ${progress.statusStage}` : null,
+    progress.statusSummary ? `📝 Summary: ${previewText(progress.statusSummary, 220)}` : null,
+    progress.statusHypothesis ? `💭 Hypothesis: ${previewText(progress.statusHypothesis, 220)}` : null,
+    progress.statusEvidence ? `🔎 Evidence: ${previewText(progress.statusEvidence, 220)}` : null,
+    progress.statusDecision ? `⚖️ Decision: ${previewText(progress.statusDecision, 220)}` : null,
+    progress.statusNextStep ? `➡️ Next: ${previewText(progress.statusNextStep, 220)}` : null,
   ].filter(Boolean);
 
-  const lines = [`${String(progress.runner)} live at ${elapsed}.`];
+  const lines = [`${runnerStatusEmoji('running')} ${String(progress.runner)} live at ${elapsed}.`];
   if (progress.heartbeat) {
     const idle = formatDuration(Number(progress.idleMs) || 0);
     lines.push(`No new output for ${idle}, but the task is still running.`);
@@ -487,9 +516,9 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
     );
   }
   if (stdoutChunk) {
-    lines.push('', 'Output:', stdoutChunk);
+    lines.push('', '📤 Output:', stdoutChunk);
   } else if (stderrChunk) {
-    lines.push('', 'stderr:', stderrChunk);
+    lines.push('', '⚠️ stderr:', stderrChunk);
   }
   lines.push('Send /status for the full live task details.');
   return lines.join('\n');
@@ -497,7 +526,7 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
 
 function runnerResultMessage(result: Record<string, unknown>, rootDir: string): string {
   const lines = [
-    `${String(result.runner)} ${String(result.status)} in ${formatDuration(Number(result.durationMs) || 0)}.`,
+    `${runnerStatusEmoji(result.status)} ${String(result.runner)} ${String(result.status)} in ${formatDuration(Number(result.durationMs) || 0)}.`,
   ];
 
   if (result.finalOutput) {
@@ -506,12 +535,12 @@ function runnerResultMessage(result: Record<string, unknown>, rootDir: string): 
     lines.push('', String(result.summary));
   }
 
-  if (!result.finalOutput && result.lastKnownStage) lines.push(`Last stage: ${result.lastKnownStage}`);
-  if (!result.finalOutput && result.lastKnownSummary) lines.push(`Last summary: ${result.lastKnownSummary}`);
-  if (!result.finalOutput && result.lastKnownHypothesis) lines.push(`Last hypothesis: ${result.lastKnownHypothesis}`);
-  if (!result.finalOutput && result.lastKnownEvidence) lines.push(`Last evidence: ${result.lastKnownEvidence}`);
-  if (!result.finalOutput && result.lastKnownDecision) lines.push(`Last decision: ${result.lastKnownDecision}`);
-  if (!result.finalOutput && result.lastKnownNextStep) lines.push(`Last next step: ${result.lastKnownNextStep}`);
+  if (!result.finalOutput && result.lastKnownStage) lines.push(`${stageEmoji(result.lastKnownStage)} Last stage: ${result.lastKnownStage}`);
+  if (!result.finalOutput && result.lastKnownSummary) lines.push(`📝 Last summary: ${result.lastKnownSummary}`);
+  if (!result.finalOutput && result.lastKnownHypothesis) lines.push(`💭 Last hypothesis: ${result.lastKnownHypothesis}`);
+  if (!result.finalOutput && result.lastKnownEvidence) lines.push(`🔎 Last evidence: ${result.lastKnownEvidence}`);
+  if (!result.finalOutput && result.lastKnownDecision) lines.push(`⚖️ Last decision: ${result.lastKnownDecision}`);
+  if (!result.finalOutput && result.lastKnownNextStep) lines.push(`➡️ Last next step: ${result.lastKnownNextStep}`);
 
   if (result.branchName) lines.push('', `Branch: ${result.branchName}`);
   if (result.commitSha) lines.push(`Commit: ${result.commitSha}`);
@@ -522,7 +551,7 @@ function runnerResultMessage(result: Record<string, unknown>, rootDir: string): 
     lines.push(`Worktree kept: ${relativeDisplayPath(String(result.keptWorktreePath), rootDir)}`);
   }
   if (Array.isArray(result.warnings) && result.warnings.length > 0) {
-    lines.push(`Warnings: ${result.warnings.join(' | ')}`);
+    lines.push(`⚠️ Warnings: ${result.warnings.join(' | ')}`);
   }
 
   return lines.join('\n');
