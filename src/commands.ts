@@ -142,6 +142,18 @@ function statusMessage(input: {
 
   if (session.activeTask) {
     lines.push(`Active agent task: ${session.activeTask.runner} since ${session.activeTask.startedAt}`);
+    if (session.activeTask.statusStage) {
+      lines.push(`Agent stage: ${session.activeTask.statusStage}`);
+    }
+    if (session.activeTask.statusSummary) {
+      lines.push(`Agent summary: ${session.activeTask.statusSummary}`);
+    }
+    if (session.activeTask.statusDecision) {
+      lines.push(`Agent decision: ${session.activeTask.statusDecision}`);
+    }
+    if (session.activeTask.statusNextStep) {
+      lines.push(`Agent next step: ${session.activeTask.statusNextStep}`);
+    }
     if (session.activeTask.branchName) {
       lines.push(`Agent branch: ${session.activeTask.branchName}`);
     }
@@ -252,19 +264,12 @@ function runnerStartedMessage(activeTask: Record<string, unknown>): string {
     `Starting ${String(activeTask.runner)}.`,
     `Task: ${previewText(activeTask.promptPreview, 140) || 'no prompt preview'}`,
   ];
-  if (activeTask.branchName) {
-    lines.push(`Branch: ${activeTask.branchName}`);
-  }
-  if (activeTask.worktreePath) {
-    lines.push(`Worktree: ${relativeDisplayPath(String(activeTask.worktreePath), config.ROOT_DIR)}`);
-  }
-  if (activeTask.commandSummary) {
-    lines.push(`Command: ${activeTask.commandSummary}`);
-  }
   if (activeTask.uploadCount) {
     lines.push(`Uploads: ${activeTask.uploadCount}`);
   }
-  lines.push('Waiting for the first output or file change.');
+  lines.push('I will keep typing while it works.');
+  lines.push('I will post updates when there is a real decision, visible file change, or stall.');
+  lines.push('Send /status at any time for the full live task details.');
   if (Array.isArray(activeTask.warnings) && activeTask.warnings.length > 0) {
     lines.push(`Warnings: ${activeTask.warnings.join(' | ')}`);
   }
@@ -305,48 +310,34 @@ function manualRunProgressMessage(activeRun: Record<string, unknown>): string {
 }
 
 function runnerProgressMessage(progress: Record<string, unknown>): string {
-  const lines = [
-    `${String(progress.runner)} still running after ${formatDuration(Number(progress.elapsedMs) || 0)}.`,
-  ];
+  const elapsed = formatDuration(Number(progress.elapsedMs) || 0);
+  const changedFiles = Array.isArray(progress.changedFiles) ? progress.changedFiles : [];
+  const statusBits = [
+    progress.statusStage ? `Stage: ${progress.statusStage}` : null,
+    progress.statusSummary ? `Summary: ${previewText(progress.statusSummary, 220)}` : null,
+    progress.statusDecision ? `Decision: ${previewText(progress.statusDecision, 220)}` : null,
+    progress.statusNextStep ? `Next: ${previewText(progress.statusNextStep, 220)}` : null,
+  ].filter(Boolean);
 
-  if (progress.branchName) {
-    lines.push(`Branch: ${progress.branchName}`);
-  }
-  if (progress.worktreePath) {
-    lines.push(`Worktree: ${relativeDisplayPath(String(progress.worktreePath), config.ROOT_DIR)}`);
-  }
-  if (progress.commandSummary) {
-    lines.push(`Command: ${progress.commandSummary}`);
+  if (!progress.stdoutTail && !progress.stderrTail && changedFiles.length === 0 && statusBits.length === 0) {
+    return `${String(progress.runner)} is still running after ${elapsed} with no visible activity yet.\nSend /status for details or /cancel to stop it.`;
   }
 
-  if (Array.isArray(progress.changedFiles) && progress.changedFiles.length > 0) {
+  const lines = [`${String(progress.runner)} update after ${elapsed}.`];
+  lines.push(...statusBits);
+  if (changedFiles.length > 0) {
     lines.push(
-      `Changed files: ${progress.changedFiles.join(', ')}${
-        Number(progress.changedFileCount) > progress.changedFiles.length
-          ? ` (+${Number(progress.changedFileCount) - progress.changedFiles.length} more)`
-          : ''
+      `Changed files: ${changedFiles.join(', ')}${
+        Number(progress.changedFileCount) > changedFiles.length ? ` (+${Number(progress.changedFileCount) - changedFiles.length} more)` : ''
       }`
     );
-  } else {
-    lines.push('Changed files: none yet');
   }
-
   if (progress.stdoutTail) {
     lines.push(`stdout: ${previewText(progress.stdoutTail, 220)}`);
   } else if (progress.stderrTail) {
     lines.push(`stderr: ${previewText(progress.stderrTail, 220)}`);
-  } else {
-    lines.push('Output: none visible yet');
   }
-
-  if ((!progress.stdoutTail && !progress.stderrTail) && (!Array.isArray(progress.changedFiles) || progress.changedFiles.length === 0)) {
-    const elapsedMs = Number(progress.elapsedMs) || 0;
-    if (elapsedMs >= 90_000) {
-      lines.push('Status: no visible activity yet; the runner may still be planning or may be stalled.');
-    } else {
-      lines.push('Status: waiting for the first visible step.');
-    }
-  }
+  lines.push('Send /status for the full live task details.');
   return lines.join('\n');
 }
 

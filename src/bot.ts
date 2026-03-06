@@ -133,6 +133,7 @@ function startChatActionPulse(
 
 const monitor = new CampgroundMonitor(sendTelegram);
 const runningTasks = new Map<string, Record<string, unknown>>();
+const runnerProgressState = new Map<string, { lastActivitySignature: string; sentIdleNotice: boolean }>();
 let manualRunPromise: Promise<void> | null = null;
 
 function messageBodyText(message?: TelegramMessage | Record<string, unknown> | null): string {
@@ -181,6 +182,52 @@ function currentStatusMessage(chatId: string | number): string {
 
 function hasBlockingActivity(): boolean {
   return runningTasks.size > 0 || Boolean(manualRunPromise);
+}
+
+function hasVisibleRunnerActivity(progress: Record<string, unknown>): boolean {
+  return Boolean(
+    progress.stdoutTail ||
+      progress.stderrTail ||
+      (Array.isArray(progress.changedFiles) && progress.changedFiles.length > 0) ||
+      progress.statusStage ||
+      progress.statusSummary ||
+      progress.statusDecision ||
+      progress.statusNextStep
+  );
+}
+
+function shouldSendRunnerProgress(chatId: string, progress: Record<string, unknown>): boolean {
+  const state = runnerProgressState.get(chatId) || { lastActivitySignature: '', sentIdleNotice: false };
+  const activitySignature = [
+    progress.statusStage || '',
+    progress.statusSummary || '',
+    progress.statusDecision || '',
+    progress.statusNextStep || '',
+    Array.isArray(progress.changedFiles) ? progress.changedFiles.join(',') : '',
+    String(progress.changedFileCount || 0),
+    progress.stdoutTail || '',
+    progress.stderrTail || '',
+  ].join('|');
+
+  if (hasVisibleRunnerActivity(progress)) {
+    if (activitySignature === state.lastActivitySignature) {
+      runnerProgressState.set(chatId, state);
+      return false;
+    }
+    state.lastActivitySignature = activitySignature;
+    state.sentIdleNotice = false;
+    runnerProgressState.set(chatId, state);
+    return true;
+  }
+
+  if (state.sentIdleNotice || Number(progress.elapsedMs) < 120_000) {
+    runnerProgressState.set(chatId, state);
+    return false;
+  }
+
+  state.sentIdleNotice = true;
+  runnerProgressState.set(chatId, state);
+  return true;
 }
 
 async function startManualRun(chatId: string | number, threadId: number | null | undefined): Promise<void> {
@@ -277,6 +324,7 @@ async function startRunnerForMessage(input: {
 
   const startTask = input.runner === 'codex' ? startCodexTask : startClaudeTask;
   const stopChatAction = startChatActionPulse(chatId, { threadId: input.threadId });
+  runnerProgressState.set(chatId, { lastActivitySignature: '', sentIdleNotice: false });
   const handle = startTask({
     prompt,
     replyContext: input.replyContext,
@@ -286,6 +334,9 @@ async function startRunnerForMessage(input: {
     senderName: sender,
     onProgress: async (progress: Record<string, unknown>) => {
       sessionStore.setTaskProgress(chatId, progress);
+      if (!shouldSendRunnerProgress(chatId, progress)) {
+        return;
+      }
       await sendTelegram(chatId, runnerProgressMessage(progress), { threadId: input.threadId });
     },
   });
@@ -297,6 +348,7 @@ async function startRunnerForMessage(input: {
   handle.promise
     .then(async (result: Record<string, unknown>) => {
       runningTasks.delete(chatId);
+      runnerProgressState.delete(chatId);
       sessionStore.setLastResult(chatId, result);
       if (result.finalOutput) {
         sessionStore.addHistory(chatId, 'assistant', String(result.finalOutput));
@@ -326,10 +378,12 @@ async function startRunnerForMessage(input: {
     })
     .catch(async (error: Error) => {
       runningTasks.delete(chatId);
+      runnerProgressState.delete(chatId);
       sessionStore.setActiveTask(chatId, null);
       await sendTelegram(chatId, `${input.runner} failed before completion: ${error.message}`, { threadId: input.threadId });
     })
     .finally(() => {
+      runnerProgressState.delete(chatId);
       stopChatAction();
     });
 

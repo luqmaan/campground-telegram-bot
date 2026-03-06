@@ -48,6 +48,10 @@ type ActiveTask = {
   changedFileCount?: number;
   stdoutTail?: string | null;
   stderrTail?: string | null;
+  statusStage?: string | null;
+  statusSummary?: string | null;
+  statusDecision?: string | null;
+  statusNextStep?: string | null;
   warnings: string[];
 };
 
@@ -219,6 +223,10 @@ class SessionStore {
       if (progress.branchName) session.activeTask.branchName = String(progress.branchName);
       if (progress.worktreePath !== undefined) session.activeTask.worktreePath = progress.worktreePath ? String(progress.worktreePath) : null;
       if (progress.commandSummary) session.activeTask.commandSummary = String(progress.commandSummary);
+      session.activeTask.statusStage = progress.statusStage ? String(progress.statusStage) : null;
+      session.activeTask.statusSummary = progress.statusSummary ? String(progress.statusSummary) : null;
+      session.activeTask.statusDecision = progress.statusDecision ? String(progress.statusDecision) : null;
+      session.activeTask.statusNextStep = progress.statusNextStep ? String(progress.statusNextStep) : null;
       return session;
     });
   }

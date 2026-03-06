@@ -47,6 +47,8 @@ type TaskResult = {
   warnings: string[];
 };
 
+const TASK_STATUS_FILE_NAME = '.campground-task-status.json';
+
 function runCommand(command: string, args: string[], cwd = config.ROOT_DIR): string {
   const result = spawnSync(command, args, {
     cwd,
@@ -165,6 +167,24 @@ function changedFilesSince(cwd: string, baseline: string[]): string[] {
   if (!baseline.length) return current;
   const baselineSet = new Set(baseline);
   return current.filter((file) => !baselineSet.has(file));
+}
+
+function readTaskStatus(cwd: string): Record<string, unknown> | null {
+  const statusFile = path.join(cwd, TASK_STATUS_FILE_NAME);
+  if (!fs.existsSync(statusFile)) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+      stage: sanitizeText(raw.stage || ''),
+      summary: sanitizeText(raw.summary || ''),
+      decision: sanitizeText(raw.decision || ''),
+      nextStep: sanitizeText(raw.next_step || raw.nextStep || ''),
+      updatedAt: sanitizeText(raw.updated_at || raw.updatedAt || ''),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function commitChanges(cwd: string, runner: RunnerName, slug: string): { commitSha: string | null; changedFiles: string[] } {
@@ -319,6 +339,8 @@ function startRunnerTask(options: {
 
   if (options.onProgress) {
     progressTimer = setInterval(() => {
+      const changedFiles = changedFilesSince(String(workspace.cwd), baselineChangedFiles);
+      const taskStatus = readTaskStatus(String(workspace.cwd));
       const progress = {
         runner: options.runner,
         taskId,
@@ -327,12 +349,16 @@ function startRunnerTask(options: {
         branchName: workspace.branchName ? String(workspace.branchName) : null,
         worktreePath: workspace.worktreePath ? String(workspace.worktreePath) : null,
         commandSummary,
-        changedFiles: changedFilesSince(String(workspace.cwd), baselineChangedFiles).slice(0, 6),
-        changedFileCount: changedFilesSince(String(workspace.cwd), baselineChangedFiles).length,
+        changedFiles: changedFiles.slice(0, 6),
+        changedFileCount: changedFiles.length,
         stdoutTail: tailText(stripAnsi(stdout), 500),
         stderrTail: tailText(stripAnsi(stderr), 500),
+        statusStage: taskStatus?.stage || null,
+        statusSummary: taskStatus?.summary || null,
+        statusDecision: taskStatus?.decision || null,
+        statusNextStep: taskStatus?.nextStep || null,
       };
-      const signature = `${progress.stdoutTail}|${progress.stderrTail}|${progress.changedFiles.join(',')}|${progress.changedFileCount}|${Math.floor(
+      const signature = `${progress.stdoutTail}|${progress.stderrTail}|${progress.changedFiles.join(',')}|${progress.changedFileCount}|${progress.statusStage}|${progress.statusSummary}|${progress.statusDecision}|${progress.statusNextStep}|${Math.floor(
         Number(progress.elapsedMs) / 1000
       )}`;
       if (signature === lastProgressSignature) return;
@@ -443,6 +469,10 @@ function startRunnerTask(options: {
       changedFileCount: 0,
       stdoutTail: null,
       stderrTail: null,
+      statusStage: null,
+      statusSummary: null,
+      statusDecision: null,
+      statusNextStep: null,
       warnings: Array.isArray(workspace.warnings) ? workspace.warnings : [],
     },
     cancel: () => {
