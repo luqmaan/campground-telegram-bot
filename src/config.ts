@@ -41,6 +41,12 @@ function numberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  return /^(1|true|yes|on)$/i.test(raw);
+}
+
 loadEnvFile(path.join(ROOT_DIR, '.env'));
 
 module.exports = {
@@ -60,9 +66,11 @@ module.exports = {
   MAX_AUTH_USERS: numberEnv('TELEGRAM_MAX_AUTH_USERS', 2),
   CHECK_INTERVAL_MS: numberEnv('CHECK_INTERVAL_MS', 10 * 60 * 1000),
   POLL_TIMEOUT_SECONDS: numberEnv('POLL_TIMEOUT_SECONDS', 30),
-  CLAUDE_TIMEOUT_SECONDS: numberEnv('CLAUDE_TIMEOUT_SECONDS', 300),
-  CODEX_TIMEOUT_SECONDS: numberEnv('CODEX_TIMEOUT_SECONDS', numberEnv('CLAUDE_TIMEOUT_SECONDS', 300)),
-  RUNNER_PROGRESS_INTERVAL_MS: numberEnv('RUNNER_PROGRESS_INTERVAL_MS', 30_000),
+  CLAUDE_TIMEOUT_SECONDS: numberEnv('CLAUDE_TIMEOUT_SECONDS', 0),
+  CODEX_TIMEOUT_SECONDS: numberEnv('CODEX_TIMEOUT_SECONDS', numberEnv('CLAUDE_TIMEOUT_SECONDS', 0)),
+  RUNNER_PROGRESS_INTERVAL_MS: numberEnv('RUNNER_PROGRESS_INTERVAL_MS', 3_000),
+  RUNNER_IDLE_PROGRESS_INTERVAL_MS: numberEnv('RUNNER_IDLE_PROGRESS_INTERVAL_MS', 45_000),
+  RUNNER_PROGRESS_OUTPUT_CHARS: numberEnv('RUNNER_PROGRESS_OUTPUT_CHARS', 1_200),
   SESSION_HISTORY_LIMIT: numberEnv('SESSION_HISTORY_LIMIT', 16),
   RUNNER_STDOUT_TAIL_CHARS: numberEnv('RUNNER_STDOUT_TAIL_CHARS', 2000),
   RUNNER_FINAL_MESSAGE_CHARS: numberEnv('RUNNER_FINAL_MESSAGE_CHARS', 3200),
@@ -70,6 +78,10 @@ module.exports = {
   MONITOR_LOCK_STALE_MS: numberEnv('MONITOR_LOCK_STALE_MS', 20 * 60 * 1000),
   CLAUDE_MODEL: process.env.CLAUDE_MODEL || 'sonnet',
   CODEX_MODEL: process.env.CODEX_MODEL || '',
+  RESERVE_CA_USE_CF_PROXY: booleanEnv('RESERVE_CA_USE_CF_PROXY', true),
+  RESERVE_CA_CF_PROXY_URL: process.env.RESERVE_CA_CF_PROXY_URL || 'https://scrape-proxy.ldawoodjee.workers.dev',
+  RESERVE_CA_CF_PROXY_SECRET: process.env.RESERVE_CA_CF_PROXY_SECRET || 'solefeed-scrape-2026',
+  RESERVE_CA_REQUEST_TIMEOUT_MS: numberEnv('RESERVE_CA_REQUEST_TIMEOUT_MS', 15_000),
   MONITOR_STATE_FILE: path.join(DATA_DIR, 'monitor-state.json'),
   MONITOR_LOCK_FILE: path.join(DATA_DIR, 'monitor-lock.json'),
   AUTH_STATE_FILE: path.join(DATA_DIR, 'auth.json'),

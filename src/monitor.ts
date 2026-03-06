@@ -2,21 +2,47 @@ const fs = require('node:fs');
 
 const config = require('./config.ts');
 const { DATE_RANGES, TARGETS } = require('./monitor-config.ts');
-const { formatDuration, nowIso, readJson, sleep, writeJson } = require('./utils.ts');
+const { formatDuration, nowIso, previewText, readJson, writeJson } = require('./utils.ts');
 
 const RDR_BASE = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
 
 type SendTelegramFn = (chatId: string | number, text: string, options?: { threadId?: number | null; html?: boolean }) => Promise<void>;
+type FacilityCheckResult = {
+  available: number;
+  total: number;
+  sites: Array<{ name: string; rate: number }>;
+};
+type ProxyResponse = {
+  ok?: boolean;
+  status?: number;
+  body?: string;
+  error?: string | null;
+};
+
+function reserveCaliforniaHeaders(): Record<string, string> {
+  return {
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Content-Type': 'application/json',
+    Origin: 'https://www.reservecalifornia.com',
+    Pragma: 'no-cache',
+    Referer: 'https://www.reservecalifornia.com/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  };
+}
 
 class CampgroundMonitor {
   sendTelegram: SendTelegramFn;
   interval: ReturnType<typeof setInterval> | null;
   started: boolean;
+  lastCheckError: string | null;
 
   constructor(sendTelegram: SendTelegramFn) {
     this.sendTelegram = sendTelegram;
     this.interval = null;
     this.started = false;
+    this.lastCheckError = null;
   }
 
   defaultState(): Record<string, unknown> {
@@ -155,15 +181,85 @@ class CampgroundMonitor {
     return lines.join('\n');
   }
 
-  async checkFacility(facilityId: number, startDate: string, nights: number): Promise<Record<string, unknown> | null> {
+  async fetchReserveCaliforniaJson(url: string, body: string, headers: Record<string, string>): Promise<Record<string, unknown> | null> {
+    const signal = AbortSignal.timeout(config.RESERVE_CA_REQUEST_TIMEOUT_MS);
+
     try {
-      const response = await fetch(`${RDR_BASE}/search/grid`, {
+      if (config.RESERVE_CA_USE_CF_PROXY) {
+        const proxyResponse = await fetch(config.RESERVE_CA_CF_PROXY_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Scrape-Secret': config.RESERVE_CA_CF_PROXY_SECRET,
+          },
+          body: JSON.stringify({
+            url,
+            method: 'POST',
+            headers,
+            body,
+          }),
+          signal,
+        });
+        if (!proxyResponse.ok) {
+          this.lastCheckError = `cfproxy transport HTTP ${proxyResponse.status}`;
+          return null;
+        }
+
+        let proxyData: ProxyResponse;
+        try {
+          proxyData = await proxyResponse.json();
+        } catch (error) {
+          this.lastCheckError = `cfproxy JSON parse failed: ${error instanceof Error ? error.message : String(error)}`;
+          return null;
+        }
+
+        const targetStatus = Number(proxyData?.status) || 0;
+        if (!proxyData?.ok) {
+          const detail = previewText(proxyData?.error || proxyData?.body || '', 160);
+          this.lastCheckError = detail
+            ? `Reserve California via cfproxy HTTP ${targetStatus || 'unknown'}: ${detail}`
+            : `Reserve California via cfproxy HTTP ${targetStatus || 'unknown'}`;
+          return null;
+        }
+
+        try {
+          return JSON.parse(String(proxyData.body || 'null'));
+        } catch (error) {
+          this.lastCheckError = `Reserve California via cfproxy returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`;
+          return null;
+        }
+      }
+
+      const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0',
-        },
-        body: JSON.stringify({
+        headers,
+        body,
+        signal,
+      });
+      if (!response.ok) {
+        this.lastCheckError = `Reserve California HTTP ${response.status}`;
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        this.lastCheckError = `Reserve California request timed out after ${config.RESERVE_CA_REQUEST_TIMEOUT_MS}ms`;
+      } else if (error instanceof Error && error.name === 'AbortError') {
+        this.lastCheckError = `Reserve California request aborted after ${config.RESERVE_CA_REQUEST_TIMEOUT_MS}ms`;
+      } else {
+        this.lastCheckError = error instanceof Error ? error.message : String(error);
+      }
+      return null;
+    }
+  }
+
+  async checkFacility(facilityId: number, startDate: string, nights: number): Promise<FacilityCheckResult | null> {
+    this.lastCheckError = null;
+
+    try {
+      const data = await this.fetchReserveCaliforniaJson(
+        `${RDR_BASE}/search/grid`,
+        JSON.stringify({
           FacilityId: facilityId,
           StartDate: startDate,
           Nights: String(nights),
@@ -172,11 +268,14 @@ class CampgroundMonitor {
           MinVehicleLength: 0,
           UnitTypesGroupIds: [],
         }),
-      });
-      if (!response.ok) return null;
-      const data = await response.json();
+        reserveCaliforniaHeaders(),
+      );
+      if (!data) return null;
       const units = data?.Facility?.Units;
-      if (!units) return null;
+      if (!units) {
+        this.lastCheckError = 'Reserve California response did not include Facility.Units';
+        return null;
+      }
       const entries = Object.values(units);
       const availableUnits = entries.filter((unit: Record<string, unknown>) => unit.IsAvailable);
       return {
@@ -187,7 +286,8 @@ class CampgroundMonitor {
           rate: unit.MinRate || 0,
         })),
       };
-    } catch {
+    } catch (error) {
+      this.lastCheckError = error instanceof Error ? error.message : String(error);
       return null;
     }
   }
@@ -248,76 +348,61 @@ class CampgroundMonitor {
     const now = Date.now();
 
     try {
+      const CONCURRENCY = 10;
+      const allTasks: Array<{ target: Record<string, unknown>; range: Record<string, unknown>; key: string }> = [];
       for (const range of DATE_RANGES) {
         for (const target of TARGETS) {
-          run.checksAttempted += 1;
-          state.activeRun = {
-            ...(state.activeRun || {}),
-            mode,
-            pid: process.pid,
-            startedAt: run.startedAt,
-            totalChecks: scope.totalChecks,
-            checksAttempted: run.checksAttempted,
-            successfulChecks: run.successfulChecks,
-            facilitiesWithAvailability,
-            currentParkName: target.parkName,
-            currentFacilityName: target.facilityName,
-            currentRangeLabel: range.label,
-            lastUpdatedAt: nowIso(),
-          };
-          this.saveState(state);
-          const key = `${target.facilityId}:${range.startDate}`;
-          if (state.alerted[key] && now - state.alerted[key] < 2 * 60 * 60 * 1000) {
-            continue;
-          }
+          allTasks.push({ target, range, key: `${target.facilityId}:${range.startDate}` });
+        }
+      }
 
-          const result = await this.checkFacility(target.facilityId, range.startDate, range.nights);
+      for (let i = 0; i < allTasks.length; i += CONCURRENCY) {
+        const batch = allTasks.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.all(
+          batch.map(async ({ target, range, key }) => {
+            run.checksAttempted += 1;
+            if (state.alerted[key] && now - state.alerted[key] < 2 * 60 * 60 * 1000) {
+              return { target, range, key, skipped: true, result: null as FacilityCheckResult | null, error: null as string | null };
+            }
+            const result = await this.checkFacility(Number(target.facilityId), String(range.startDate), Number(range.nights));
+            const error = this.lastCheckError;
+            return { target, range, key, skipped: false, result, error };
+          }),
+        );
+
+        for (const { target, range, key, skipped, result, error } of batchResults) {
+          if (skipped) continue;
           if (!result) {
             if (run.errors.length < 5) {
-              run.errors.push(`No response for ${target.parkName} ${target.facilityName} (${range.label})`);
+              run.errors.push(`${target.parkName} ${target.facilityName} (${range.label}): ${error || 'No response'}`);
             }
             continue;
           }
-
           run.successfulChecks += 1;
-          state.activeRun = {
-            ...(state.activeRun || {}),
-            mode,
-            pid: process.pid,
-            startedAt: run.startedAt,
-            totalChecks: scope.totalChecks,
-            checksAttempted: run.checksAttempted,
-            successfulChecks: run.successfulChecks,
-            facilitiesWithAvailability,
-            currentParkName: target.parkName,
-            currentFacilityName: target.facilityName,
-            currentRangeLabel: range.label,
-            lastUpdatedAt: nowIso(),
-          };
           if (result.available > 0) {
             facilitiesWithAvailability += 1;
             alerts.push(this.formatAlert(target, range, result));
             state.alerted[key] = now;
             this.recordEvent(state, `Availability found at ${target.parkName} ${target.facilityName} (${range.label})`);
           }
-          state.activeRun = {
-            ...(state.activeRun || {}),
-            mode,
-            pid: process.pid,
-            startedAt: run.startedAt,
-            totalChecks: scope.totalChecks,
-            checksAttempted: run.checksAttempted,
-            successfulChecks: run.successfulChecks,
-            facilitiesWithAvailability,
-            currentParkName: target.parkName,
-            currentFacilityName: target.facilityName,
-            currentRangeLabel: range.label,
-            lastUpdatedAt: nowIso(),
-          };
-          this.saveState(state);
-
-          await sleep(300);
         }
+
+        const lastTask = batch[batch.length - 1];
+        state.activeRun = {
+          ...(state.activeRun || {}),
+          mode,
+          pid: process.pid,
+          startedAt: run.startedAt,
+          totalChecks: scope.totalChecks,
+          checksAttempted: run.checksAttempted,
+          successfulChecks: run.successfulChecks,
+          facilitiesWithAvailability,
+          currentParkName: lastTask.target.parkName,
+          currentFacilityName: lastTask.target.facilityName,
+          currentRangeLabel: lastTask.range.label,
+          lastUpdatedAt: nowIso(),
+        };
+        this.saveState(state);
       }
 
       if (alerts.length > 0) {
