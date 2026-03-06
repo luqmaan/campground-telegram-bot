@@ -270,8 +270,24 @@ class SessionStore {
     });
   }
 
-  reconcileInterruptedTasks(): Array<{ chatId: string; runner: RunnerName; pid: number | null }> {
-    const repaired: Array<{ chatId: string; runner: RunnerName; pid: number | null }> = [];
+  reconcileInterruptedTasks(): Array<{
+    chatId: string;
+    runner: RunnerName;
+    pid: number | null;
+    cardMessageId: number | null;
+    cardThreadId: number | null;
+    activeTask: ActiveTask;
+    result: TaskResult;
+  }> {
+    const repaired: Array<{
+      chatId: string;
+      runner: RunnerName;
+      pid: number | null;
+      cardMessageId: number | null;
+      cardThreadId: number | null;
+      activeTask: ActiveTask;
+      result: TaskResult;
+    }> = [];
 
     for (const chatId of this.listSessionIds()) {
       const session = this.getSession(chatId);
@@ -290,7 +306,7 @@ class SessionStore {
       const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
       const warnings = [...(Array.isArray(activeTask.warnings) ? activeTask.warnings : []), 'Task was interrupted because bilal69-bot restarted.'];
 
-      session.lastResult = {
+      const result: TaskResult = {
         id: String(activeTask.id || `interrupted-${Date.now()}`),
         runner: activeTask.runner,
         status: 'failed',
@@ -313,10 +329,19 @@ class SessionStore {
         lastKnownNextStep: activeTask.statusNextStep || null,
         warnings,
       };
+      session.lastResult = result;
       session.lastRunner = activeTask.runner;
       session.activeTask = null;
       this.saveSession(chatId, session);
-      repaired.push({ chatId, runner: activeTask.runner, pid });
+      repaired.push({
+        chatId,
+        runner: activeTask.runner,
+        pid,
+        cardMessageId: activeTask.cardMessageId || null,
+        cardThreadId: activeTask.cardThreadId || null,
+        activeTask: { ...activeTask },
+        result,
+      });
     }
 
     return repaired;

@@ -525,6 +525,57 @@ async function startRunnerForMessage(input: {
   }
 }
 
+async function reconcileInterruptedTaskCards(
+  repairedTasks: Array<{
+    chatId: string;
+    runner: string;
+    pid: number | null;
+    cardMessageId: number | null;
+    cardThreadId: number | null;
+    activeTask: Record<string, unknown>;
+    result: Record<string, unknown>;
+  }>
+): Promise<void> {
+  for (const repaired of repairedTasks) {
+    try {
+      const text = runnerCardMessage({
+        status: repaired.result.status,
+        runner: repaired.activeTask.runner,
+        promptPreview: repaired.activeTask.promptPreview,
+        durationMs: repaired.result.durationMs || 0,
+        statusStage: repaired.result.lastKnownStage || repaired.activeTask.statusStage || null,
+        statusSummary: repaired.result.lastKnownSummary || repaired.activeTask.statusSummary || null,
+        statusHypothesis: repaired.result.lastKnownHypothesis || repaired.activeTask.statusHypothesis || null,
+        statusEvidence: repaired.result.lastKnownEvidence || repaired.activeTask.statusEvidence || null,
+        statusDecision: repaired.result.lastKnownDecision || repaired.activeTask.statusDecision || null,
+        statusNextStep: repaired.result.lastKnownNextStep || repaired.activeTask.statusNextStep || null,
+        changedFiles: repaired.result.changedFiles || repaired.activeTask.changedFiles || [],
+        changedFileCount:
+          (Array.isArray(repaired.result.changedFiles) ? repaired.result.changedFiles.length : 0) ||
+          repaired.activeTask.changedFileCount ||
+          0,
+        summary: repaired.result.summary || null,
+        stdoutChunk: '',
+        stderrChunk: '',
+        commitSha: repaired.result.commitSha || null,
+        warnings: repaired.result.warnings || repaired.activeTask.warnings || [],
+      });
+
+      if (repaired.cardMessageId) {
+        await editTelegramSingle(repaired.chatId, repaired.cardMessageId, text, {
+          replyMarkup: runnerTaskKeyboard(false),
+        });
+      } else {
+        await sendTelegram(repaired.chatId, runnerResultMessage(repaired.result, config.ROOT_DIR), {
+          threadId: repaired.cardThreadId ?? null,
+        });
+      }
+    } catch (error) {
+      log('WARN', 'Failed to reconcile interrupted task card', error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
 async function handleRunnerCommand(input: {
   command: Record<string, unknown>;
   message: TelegramMessage;
@@ -838,6 +889,7 @@ async function main(): Promise<void> {
   log('INFO', `Node version: ${process.version}`);
   if (repairedTasks.length > 0) {
     log('WARN', 'Reconciled interrupted runner tasks', repairedTasks);
+    await reconcileInterruptedTaskCards(repairedTasks);
   }
   await monitor.startScheduler();
   await pollLoop();
