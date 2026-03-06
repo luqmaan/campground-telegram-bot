@@ -182,6 +182,7 @@ class CampgroundMonitor {
       return {
         available: availableUnits.length,
         total: entries.length,
+        parkId: data?.Facility?.ParkId ?? null,
         sites: availableUnits.slice(0, 5).map((unit: Record<string, unknown>) => ({
           name: unit.ShortName || unit.Name || '?',
           rate: unit.MinRate || 0,
@@ -195,10 +196,14 @@ class CampgroundMonitor {
   formatAlert(target: Record<string, unknown>, range: Record<string, unknown>, result: Record<string, unknown>): string {
     const tierLabel = target.tier === 1 ? '🔥' : target.tier === 2 ? '⭐' : '📍';
     const siteList = result.sites.map((site: Record<string, unknown>) => `  ${site.name} ($${site.rate}/night)`).join('\n');
+    const bookingUrl = result.parkId
+      ? `https://www.reservecalifornia.com/Web/Default.aspx#!park/${result.parkId}/${target.facilityId}`
+      : `https://www.reservecalifornia.com`;
     return (
       `${tierLabel} <b>${target.parkName}</b> — ${target.facilityName}\n` +
       `${range.label}: <b>${result.available} sites available</b> (of ${result.total})\n` +
-      siteList
+      siteList + '\n' +
+      `<a href="${bookingUrl}">📅 Book Now</a>`
     );
   }
 
@@ -330,7 +335,7 @@ class CampgroundMonitor {
           }
           message += `${alert}\n\n`;
         }
-        await this.sendTelegram(config.GROUP_CHAT_ID, `${message}🔗 https://www.reservecalifornia.com`, { html: true });
+        await this.sendTelegram(config.GROUP_CHAT_ID, message, { html: true });
       }
 
       state.lastCheck = Date.now();
