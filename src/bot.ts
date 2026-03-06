@@ -332,7 +332,9 @@ async function upsertRunnerTaskCard(input: {
     stderrChunk: input.progress?.stderrChunk || '',
     stderrTail: input.result?.stderrTail || input.progress?.stderrTail || input.activeTask.stderrTail || '',
     summary: input.result?.summary || null,
+    finalOutput: input.result?.finalOutput || null,
     commitSha: input.result?.commitSha || null,
+    postActions: input.result?.postActions || [],
     warnings: input.result?.warnings || input.activeTask.warnings || [],
   });
 
@@ -480,21 +482,6 @@ async function startRunnerForMessage(input: {
       const activeTask = sessionStore.getActiveTask(chatId, finishedTaskId) || handle.meta;
       runningTasks.delete(finishedTaskId);
       runnerProgressState.delete(finishedTaskId);
-      try {
-        await upsertRunnerTaskCard({
-          chatId,
-          threadId: input.threadId,
-          activeTask,
-          result,
-        });
-      } catch (error) {
-        log('WARN', 'Failed to update runner task card', error instanceof Error ? error.message : String(error));
-      }
-      sessionStore.completeTask(chatId, finishedTaskId, result);
-      if (result.finalOutput) {
-        sessionStore.addHistory(chatId, 'assistant', String(result.finalOutput));
-      }
-
       const followups: string[] = [];
       if (result.status === 'completed' && result.commitSha) {
         try {
@@ -513,9 +500,21 @@ async function startRunnerForMessage(input: {
         followups.push('Changes were produced but not auto-applied because no task commit was created.');
       }
 
-      const resultMessage = runnerResultMessage(result, config.ROOT_DIR);
-      const fullMessage = followups.length > 0 ? `${resultMessage}\n\n${followups.join('\n')}` : resultMessage;
-      await sendTelegram(chatId, fullMessage, { threadId: input.threadId });
+      const cardResult = followups.length > 0 ? { ...result, postActions: followups } : result;
+      try {
+        await upsertRunnerTaskCard({
+          chatId,
+          threadId: input.threadId,
+          activeTask,
+          result: cardResult,
+        });
+      } catch (error) {
+        log('WARN', 'Failed to update runner task card', error instanceof Error ? error.message : String(error));
+      }
+      sessionStore.completeTask(chatId, finishedTaskId, result);
+      if (result.finalOutput) {
+        sessionStore.addHistory(chatId, 'assistant', String(result.finalOutput));
+      }
     })
     .catch(async (error: Error) => {
       const failedTaskId = String(handle.meta.id);
@@ -558,7 +557,6 @@ async function startRunnerForMessage(input: {
         }
       }
       sessionStore.completeTask(chatId, failedTaskId, failedResult);
-      await sendTelegram(chatId, `${input.runner} failed before completion: ${error.message}`, { threadId: input.threadId });
     })
     .finally(() => {
       runnerProgressState.delete(String(handle.meta.id));

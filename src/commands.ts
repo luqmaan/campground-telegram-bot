@@ -395,6 +395,7 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   const runner = String(input.runner || 'runner');
   const promptPreview = previewText(input.promptPreview, 140) || 'no prompt preview';
   const changedFiles = Array.isArray(input.changedFiles) ? input.changedFiles : [];
+  const postActions = Array.isArray(input.postActions) ? input.postActions.map((value) => String(value).trim()).filter(Boolean) : [];
   const stdoutChunk = input.stdoutChunk ? String(input.stdoutChunk).trim() : '';
   const stdoutTail = input.stdoutTail ? String(input.stdoutTail).trim() : '';
   const stderrChunk = input.stderrChunk ? String(input.stderrChunk).trim() : '';
@@ -439,12 +440,25 @@ function runnerCardMessage(input: Record<string, unknown>): string {
     lines.push(stderrPreview);
   }
 
+  if (status !== 'running' && input.finalOutput) {
+    const finalOutputPreview = previewLastLines(input.finalOutput, 10, 900) || previewText(input.finalOutput, 900);
+    if (finalOutputPreview) {
+      lines.push('💬 Result:');
+      lines.push(finalOutputPreview);
+    }
+  }
+
   if (status !== 'running' && input.summary) {
     lines.push(`📝 Summary: ${previewText(input.summary, 260)}`);
   }
 
   if (status !== 'running' && input.commitSha) {
     lines.push(`Commit: ${input.commitSha}`);
+  }
+
+  if (status !== 'running' && postActions.length > 0) {
+    lines.push('📌 Actions:');
+    lines.push(...postActions.map((line) => `- ${line}`));
   }
 
   if (status !== 'running' && Array.isArray(input.warnings) && input.warnings.length > 0) {
