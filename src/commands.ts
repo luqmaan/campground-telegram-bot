@@ -448,7 +448,7 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   if (status !== 'running' && input.finalOutput) {
     const finalOutputPreview = previewLastLines(input.finalOutput, 10, 900) || previewText(input.finalOutput, 900);
     if (finalOutputPreview) {
-      sections.push([`💬 <b>Result:</b>`, escapeHtml(finalOutputPreview)]);
+      sections.push([`💬 <b>Result:</b>`, finalOutputPreview]);
     }
   }
 
