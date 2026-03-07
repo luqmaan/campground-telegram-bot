@@ -439,16 +439,17 @@ function runnerCardMessage(input: Record<string, unknown>): string {
 
   const outputPreview = previewLastLines(stdoutTail || stdoutChunk, 8, 700) || previewLastLines(stdoutChunk, 8, 700);
   const stderrPreview = previewLastLines(stderrTail || stderrChunk, 6, 600) || previewLastLines(stderrChunk, 6, 600);
-  if (outputPreview) {
-    sections.push([`📤 <b>Output:</b>`, escapeHtml(outputPreview)]);
-  } else if (stderrPreview) {
-    sections.push([`⚠️ <b>stderr:</b>`, escapeHtml(stderrPreview)]);
-  }
 
   if (status !== 'running' && input.finalOutput) {
     const finalOutputPreview = previewLastLines(input.finalOutput, 10, 900) || previewText(input.finalOutput, 900);
     if (finalOutputPreview) {
       sections.push([`💬 <b>Result:</b>`, finalOutputPreview]);
+    }
+  } else {
+    if (outputPreview) {
+      sections.push([`📤 <b>Output:</b>`, escapeHtml(outputPreview)]);
+    } else if (stderrPreview) {
+      sections.push([`⚠️ <b>stderr:</b>`, escapeHtml(stderrPreview)]);
     }
   }
 
