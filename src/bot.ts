@@ -2,6 +2,7 @@ const config = require('./config.ts');
 const { CampgroundMonitor } = require('./monitor.ts');
 const { SessionStore, displayName, profileFromTelegramUser } = require('./session-store.ts');
 const {
+  escapeHtml,
   helpMessage,
   logsMessage,
   manualRunProgressMessage,
@@ -359,7 +360,7 @@ async function upsertRunnerTaskCard(input: {
 
 async function startManualRun(chatId: string | number, threadId: number | null | undefined): Promise<void> {
   if (manualRunPromise) {
-    await sendTelegram(chatId, 'A manual run is already in progress.', { threadId });
+    await sendTelegram(chatId, 'A manual run is already in progress.', { threadId, html: true });
     return;
   }
 
@@ -377,13 +378,13 @@ async function startManualRun(chatId: string | number, threadId: number | null |
     }
     lastProgressMessage = message;
     try {
-      await sendTelegram(chatId, message, { threadId });
+      await sendTelegram(chatId, message, { threadId, html: true });
     } catch (error) {
       log('WARN', 'Failed to send manual progress update', error instanceof Error ? error.message : String(error));
     }
   };
 
-  await sendTelegram(chatId, manualRunStartedMessage(scope), { threadId });
+  await sendTelegram(chatId, manualRunStartedMessage(scope), { threadId, html: true });
   const progressInterval = setInterval(() => {
     void sendManualProgress();
   }, 12000);
@@ -392,13 +393,13 @@ async function startManualRun(chatId: string | number, threadId: number | null |
     .runCheck('manual')
     .then(async (result: Record<string, unknown>) => {
       if (result.skipped) {
-        await sendTelegram(chatId, 'Manual run skipped because another run is already active.', { threadId });
+        await sendTelegram(chatId, 'Manual run skipped because another run is already active.', { threadId, html: true });
         return;
       }
-      await sendTelegram(chatId, monitor.latestRunSummary(), { threadId });
+      await sendTelegram(chatId, monitor.latestRunSummary(), { threadId, html: true });
     })
     .catch(async (error: Error) => {
-      await sendTelegram(chatId, `Manual run failed: ${error.message}`, { threadId });
+      await sendTelegram(chatId, `<b>Manual run failed:</b> ${escapeHtml(error.message)}`, { threadId, html: true });
     })
     .finally(() => {
       clearInterval(progressInterval);
@@ -427,6 +428,7 @@ async function startRunnerForMessage(input: {
     }
     await sendTelegram(chatId, 'Send a task after /claude or /codex. Uploads were kept pending if any were attached.', {
       threadId: input.threadId,
+      html: true,
     });
     return;
   }
@@ -616,6 +618,7 @@ async function reconcileInterruptedTaskCards(
       } else {
         await sendTelegram(repaired.chatId, runnerResultMessage(repaired.result, config.ROOT_DIR), {
           threadId: repaired.cardThreadId ?? null,
+          html: true,
         });
       }
     } catch (error) {
@@ -660,36 +663,36 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
   if (command.type === 'empty') {
     if (uploads.length > 0) {
       const session = sessionStore.appendPendingUploads(chatId, uploads);
-      await sendTelegram(chatId, uploadQueuedMessage(uploads, session.pendingUploads.length), { threadId });
+      await sendTelegram(chatId, uploadQueuedMessage(uploads, session.pendingUploads.length), { threadId, html: true });
       return;
     }
-    await sendTelegram(chatId, 'Send a command or a task. Try /help.', { threadId });
+    await sendTelegram(chatId, 'Send a command or a task. Try /help.', { threadId, html: true });
     return;
   }
 
   if (command.type !== 'runner' && uploads.length > 0) {
     const session = sessionStore.appendPendingUploads(chatId, uploads);
-    await sendTelegram(chatId, uploadQueuedMessage(uploads, session.pendingUploads.length), { threadId });
+    await sendTelegram(chatId, uploadQueuedMessage(uploads, session.pendingUploads.length), { threadId, html: true });
   }
 
   if (command.type === 'help') {
-    await sendTelegram(chatId, helpMessage(), { threadId });
+    await sendTelegram(chatId, helpMessage(), { threadId, html: true });
     return;
   }
 
   if (command.type === 'status') {
-    await sendTelegram(chatId, currentStatusMessage(chatId, selectedTaskId), { threadId });
+    await sendTelegram(chatId, currentStatusMessage(chatId, selectedTaskId), { threadId, html: true });
     return;
   }
 
   if (command.type === 'scope') {
-    await sendTelegram(chatId, monitor.scopeMessage(), { threadId });
+    await sendTelegram(chatId, monitor.scopeMessage(), { threadId, html: true });
     return;
   }
 
   if (command.type === 'users') {
     const auth = sessionStore.listAuthorizedUsers();
-    await sendTelegram(chatId, usersMessage(auth.users, auth.maxAuthorizedUsers), { threadId });
+    await sendTelegram(chatId, usersMessage(auth.users, auth.maxAuthorizedUsers), { threadId, html: true });
     return;
   }
 
@@ -700,19 +703,19 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
 
   if (command.type === 'pause-monitor') {
     monitor.pauseScheduler();
-    await sendTelegram(chatId, 'Monitor scheduler paused.', { threadId });
+    await sendTelegram(chatId, 'Monitor scheduler paused.', { threadId, html: true });
     return;
   }
 
   if (command.type === 'resume-monitor') {
     await monitor.resumeScheduler();
-    await sendTelegram(chatId, 'Monitor scheduler running.', { threadId });
+    await sendTelegram(chatId, 'Monitor scheduler running.', { threadId, html: true });
     return;
   }
 
   if (command.type === 'restart-monitor') {
     await monitor.restartScheduler();
-    await sendTelegram(chatId, 'Monitor scheduler restarted.', { threadId });
+    await sendTelegram(chatId, 'Monitor scheduler restarted.', { threadId, html: true });
     return;
   }
 
@@ -724,14 +727,14 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
         monitorStatus: monitor.getStatus(),
         session: sessionSnapshot(chatId, selectedTaskId),
       }),
-      { threadId }
+      { threadId, html: true }
     );
     return;
   }
 
   if (command.type === 'forget') {
     sessionStore.clearHistory(chatId);
-    await sendTelegram(chatId, 'Chat history cleared for this group. Pending uploads were left intact.', { threadId });
+    await sendTelegram(chatId, 'Chat history cleared for this group. Pending uploads were left intact.', { threadId, html: true });
     return;
   }
 
@@ -739,39 +742,39 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
     const targetTask = selectedTaskId ? taskHandle(selectedTaskId) : latestActiveTaskHandle(chatId);
     const task = targetTask || null;
     if (!task) {
-      await sendTelegram(chatId, selectedTaskId ? 'That agent is not running anymore.' : 'No Claude or Codex task is running.', { threadId });
+      await sendTelegram(chatId, selectedTaskId ? 'That agent is not running anymore.' : 'No Claude or Codex task is running.', { threadId, html: true });
       return;
     }
     task.cancel();
-    await sendTelegram(chatId, 'Task cancellation requested for that agent.', { threadId });
+    await sendTelegram(chatId, 'Task cancellation requested for that agent.', { threadId, html: true });
     return;
   }
 
   if (command.type === 'apply') {
     if (hasBlockingActivity()) {
-      await sendTelegram(chatId, 'Cannot /apply while a runner task or manual monitor run is active.', { threadId });
+      await sendTelegram(chatId, 'Cannot /apply while a runner task or manual monitor run is active.', { threadId, html: true });
       return;
     }
     try {
       const result = applyRef(String(command.ref || ''), sessionSnapshot(chatId, selectedTaskId).lastResult || null);
-      await sendTelegram(chatId, String(result.message), { threadId });
+      await sendTelegram(chatId, escapeHtml(String(result.message)), { threadId, html: true });
     } catch (error) {
-      await sendTelegram(chatId, `Apply failed: ${error instanceof Error ? error.message : String(error)}`, { threadId });
+      await sendTelegram(chatId, `<b>Apply failed:</b> ${escapeHtml(error instanceof Error ? error.message : String(error))}`, { threadId, html: true });
     }
     return;
   }
 
   if (command.type === 'deploy') {
     if (hasBlockingActivity()) {
-      await sendTelegram(chatId, 'Cannot /deploy while a runner task or manual monitor run is active.', { threadId });
+      await sendTelegram(chatId, 'Cannot /deploy while a runner task or manual monitor run is active.', { threadId, html: true });
       return;
     }
     try {
       const requestedBy = displayName(profileFromTelegramUser(message.from || {}));
       const result = scheduleDeploy(requestedBy, sessionSnapshot(chatId, selectedTaskId).lastResult?.commitSha || null);
-      await sendTelegram(chatId, String(result.message), { threadId });
+      await sendTelegram(chatId, escapeHtml(String(result.message)), { threadId, html: true });
     } catch (error) {
-      await sendTelegram(chatId, `Deploy scheduling failed: ${error instanceof Error ? error.message : String(error)}`, { threadId });
+      await sendTelegram(chatId, `<b>Deploy scheduling failed:</b> ${escapeHtml(error instanceof Error ? error.message : String(error))}`, { threadId, html: true });
     }
     return;
   }
@@ -787,7 +790,7 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
   }
 
   if (sessionBefore.pendingUploads.length > 0 && uploads.length === 0) {
-    await sendTelegram(chatId, 'Pending uploads are waiting for the next /claude or /codex task.', { threadId });
+    await sendTelegram(chatId, 'Pending uploads are waiting for the next /claude or /codex task.', { threadId, html: true });
   }
 }
 
@@ -820,13 +823,14 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
 
   const auth = sessionStore.ensureAuthorized(message.from);
   if (!auth.authorized) {
-    await sendTelegram(message.chat.id, 'Not authorized for campground control.', { threadId: message.message_thread_id });
+    await sendTelegram(message.chat.id, 'Not authorized for campground control.', { threadId: message.message_thread_id, html: true });
     return;
   }
 
   if (auth.newlyAdded && auth.user) {
-    await sendTelegram(message.chat.id, `Authorized ${displayName(auth.user)} for campground control.`, {
+    await sendTelegram(message.chat.id, `Authorized <b>${escapeHtml(displayName(auth.user))}</b> for campground control.`, {
       threadId: message.message_thread_id,
+      html: true,
     });
   }
 
@@ -836,8 +840,8 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
   } catch (error) {
     await sendTelegram(
       message.chat.id,
-      `Failed to download Telegram attachment: ${error instanceof Error ? error.message : String(error)}`,
-      { threadId: message.message_thread_id }
+      `<b>Failed to download Telegram attachment:</b> ${escapeHtml(error instanceof Error ? error.message : String(error))}`,
+      { threadId: message.message_thread_id, html: true }
     );
     return;
   }
@@ -865,7 +869,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery): Promis
 
   if (action === 'runner:status') {
     await answerCallbackQuery(callbackQuery.id, 'Sending status');
-    await sendTelegram(chatId, currentStatusMessage(chatId, selectedTaskId), { threadId });
+    await sendTelegram(chatId, currentStatusMessage(chatId, selectedTaskId), { threadId, html: true });
     return;
   }
 
@@ -878,7 +882,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery): Promis
         monitorStatus: monitor.getStatus(),
         session: sessionSnapshot(chatId, selectedTaskId),
       }),
-      { threadId }
+      { threadId, html: true }
     );
     return;
   }
@@ -891,7 +895,7 @@ async function handleCallbackQuery(callbackQuery: TelegramCallbackQuery): Promis
     }
     task.cancel();
     await answerCallbackQuery(callbackQuery.id, 'Cancelling task');
-    await sendTelegram(chatId, 'Task cancellation requested for that agent.', { threadId });
+    await sendTelegram(chatId, 'Task cancellation requested for that agent.', { threadId, html: true });
     return;
   }
 

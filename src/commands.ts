@@ -79,21 +79,22 @@ function parseCommand(rawText: string): Record<string, unknown> {
 
 function helpMessage(): string {
   return [
-    'Campground bot commands',
-    '/status',
-    '/scope',
-    '/run-now',
-    '/pause-monitor',
-    '/resume-monitor',
-    '/restart-monitor',
-    '/logs [monitor|runner]',
-    '/users',
-    '/forget',
-    '/cancel',
-    '/apply [commit-or-branch]',
-    '/deploy',
-    '/claude <task>',
-    '/codex <task>',
+    '<b>Campground bot commands</b>',
+    '',
+    '<code>/status</code>',
+    '<code>/scope</code>',
+    '<code>/run-now</code>',
+    '<code>/pause-monitor</code>',
+    '<code>/resume-monitor</code>',
+    '<code>/restart-monitor</code>',
+    '<code>/logs</code> [monitor|runner]',
+    '<code>/users</code>',
+    '<code>/forget</code>',
+    '<code>/cancel</code>',
+    '<code>/apply</code> [commit-or-branch]',
+    '<code>/deploy</code>',
+    '<code>/claude</code> &lt;task&gt;',
+    '<code>/codex</code> &lt;task&gt;',
     '',
     'Successful code changes are auto-applied to main.',
     'Runtime-affecting changes are auto-deployed after apply.',
@@ -104,9 +105,9 @@ function helpMessage(): string {
 }
 
 function usersMessage(users: Array<Record<string, unknown>>, maxAuthorizedUsers: number): string {
-  const lines = [`Authorized users (${users.length}/${maxAuthorizedUsers})`];
+  const lines = [`<b>Authorized users (${users.length}/${maxAuthorizedUsers})</b>`];
   users.forEach((user, index) => {
-    lines.push(`${index + 1}. ${displayName(user)} [${user.id}] via ${user.source}`);
+    lines.push(`${index + 1}. <b>${escapeHtml(displayName(user))}</b> [${escapeHtml(String(user.id || ''))}] via ${escapeHtml(String(user.source || ''))}`);
   });
   return lines.join('\n');
 }
@@ -118,10 +119,11 @@ function statusMessage(input: {
 }): string {
   const monitorStatus = input.monitorStatus;
   const session = input.session;
+  const esc = escapeHtml;
   const lines = [
-    'Campground bot status',
-    `Scheduler: ${monitorStatus.schedulerEnabled ? 'running' : 'paused'}`,
-    `Manual run: ${input.manualRunActive ? 'active' : 'idle'}`,
+    '<b>Campground bot status</b>',
+    `<b>Scheduler:</b> ${monitorStatus.schedulerEnabled ? 'running' : 'paused'}`,
+    `<b>Manual run:</b> ${input.manualRunActive ? 'active' : 'idle'}`,
   ];
   const activeTasks = Array.isArray(session.activeTasks) ? session.activeTasks : session.activeTask ? [session.activeTask] : [];
 
@@ -145,111 +147,111 @@ function statusMessage(input: {
       progressBits.push(`openings ${facilitiesWithAvailability}`);
     }
     if (currentParkName && currentFacilityName && currentRangeLabel) {
-      progressBits.push(`current ${currentParkName} / ${currentFacilityName} / ${currentRangeLabel}`);
+      progressBits.push(`current ${esc(currentParkName)} / ${esc(currentFacilityName)} / ${esc(currentRangeLabel)}`);
     }
 
     lines.push(
-      `Active monitor run: ${monitorStatus.activeRun.mode} since ${monitorStatus.activeRun.startedAt}${
+      `<b>Active monitor run:</b> ${esc(String(monitorStatus.activeRun.mode || ''))} since ${esc(String(monitorStatus.activeRun.startedAt || ''))}${
         progressBits.length > 0 ? ` | ${progressBits.join(', ')}` : ''
       }`
     );
   } else {
-    lines.push(`Last check: ${formatSince(Number(monitorStatus.lastCheck) || 0)}`);
+    lines.push(`<b>Last check:</b> ${esc(formatSince(Number(monitorStatus.lastCheck) || 0))}`);
   }
 
   if (monitorStatus.lastError) {
-    lines.push(`Last error: ${monitorStatus.lastError}`);
+    lines.push(`<b>Last error:</b> ${esc(String(monitorStatus.lastError))}`);
   }
 
   if (activeTasks.length > 1) {
-    lines.push(`Active agent tasks: ${activeTasks.length}`);
+    lines.push(`<b>Active agent tasks:</b> ${activeTasks.length}`);
   }
 
   if (session.activeTask) {
-    lines.push(`${runnerStatusEmoji('running')} Active agent task: ${session.activeTask.runner} since ${session.activeTask.startedAt}`);
+    lines.push(`${runnerStatusEmoji('running')} <b>Active agent task:</b> ${esc(String(session.activeTask.runner || ''))} since ${esc(String(session.activeTask.startedAt || ''))}`);
     if (session.activeTask.statusStage) {
-      lines.push(`${stageEmoji(session.activeTask.statusStage)} Agent stage: ${session.activeTask.statusStage}`);
+      lines.push(`${stageEmoji(session.activeTask.statusStage)} <b>Agent stage:</b> ${esc(String(session.activeTask.statusStage))}`);
     }
     if (session.activeTask.statusSummary) {
-      lines.push(`📝 Agent summary: ${session.activeTask.statusSummary}`);
+      lines.push(`📝 <b>Agent summary:</b> ${esc(previewText(session.activeTask.statusSummary, 180))}`);
     }
     if (session.activeTask.statusHypothesis) {
-      lines.push(`💭 Agent hypothesis: ${session.activeTask.statusHypothesis}`);
+      lines.push(`💭 <b>Agent hypothesis:</b> ${esc(previewText(session.activeTask.statusHypothesis, 180))}`);
     }
     if (session.activeTask.statusEvidence) {
-      lines.push(`🔎 Agent evidence: ${session.activeTask.statusEvidence}`);
+      lines.push(`🔎 <b>Agent evidence:</b> ${esc(previewText(session.activeTask.statusEvidence, 180))}`);
     }
     if (session.activeTask.statusDecision) {
-      lines.push(`⚖️ Agent decision: ${session.activeTask.statusDecision}`);
+      lines.push(`⚖️ <b>Agent decision:</b> ${esc(previewText(session.activeTask.statusDecision, 180))}`);
     }
     if (session.activeTask.statusNextStep) {
-      lines.push(`➡️ Agent next step: ${session.activeTask.statusNextStep}`);
+      lines.push(`➡️ <b>Agent next step:</b> ${esc(previewText(session.activeTask.statusNextStep, 180))}`);
     }
     if (session.activeTask.branchName) {
-      lines.push(`Agent branch: ${session.activeTask.branchName}`);
+      lines.push(`<b>Agent branch:</b> <code>${esc(String(session.activeTask.branchName))}</code>`);
     }
     if (session.activeTask.worktreePath) {
-      lines.push(`Agent worktree: ${relativeDisplayPath(String(session.activeTask.worktreePath), config.ROOT_DIR)}`);
+      lines.push(`<b>Agent worktree:</b> <code>${esc(relativeDisplayPath(String(session.activeTask.worktreePath), config.ROOT_DIR))}</code>`);
     }
     if (session.activeTask.commandSummary) {
-      lines.push(`Agent command: ${session.activeTask.commandSummary}`);
+      lines.push(`<b>Agent command:</b> ${esc(String(session.activeTask.commandSummary))}`);
     }
     if (Array.isArray(session.activeTask.changedFiles) && session.activeTask.changedFiles.length > 0) {
       lines.push(
-        `Agent changed files: ${session.activeTask.changedFiles.join(', ')}${
+        `<b>Agent changed files:</b> <code>${esc(session.activeTask.changedFiles.join(', '))}${
           session.activeTask.changedFileCount > session.activeTask.changedFiles.length
             ? ` (+${session.activeTask.changedFileCount - session.activeTask.changedFiles.length} more)`
             : ''
-        }`
+        }</code>`
       );
     } else {
-      lines.push('Agent changed files: none yet');
+      lines.push('<b>Agent changed files:</b> none yet');
     }
     if (session.activeTask.stdoutTail) {
-      lines.push(`Agent stdout: ${previewText(session.activeTask.stdoutTail, 180)}`);
+      lines.push(`<b>Agent stdout:</b> ${esc(previewText(session.activeTask.stdoutTail, 180))}`);
     } else if (session.activeTask.stderrTail) {
-      lines.push(`Agent stderr: ${previewText(session.activeTask.stderrTail, 180)}`);
+      lines.push(`<b>Agent stderr:</b> ${esc(previewText(session.activeTask.stderrTail, 180))}`);
     } else if (session.activeTask.lastProgressAt) {
-      lines.push(`Agent output: none visible as of ${session.activeTask.lastProgressAt}`);
+      lines.push(`<b>Agent output:</b> none visible as of ${esc(String(session.activeTask.lastProgressAt))}`);
     }
   } else {
-    lines.push('Active agent task: none');
+    lines.push('<b>Active agent task:</b> none');
   }
 
-  lines.push(`Pending uploads: ${Array.isArray(session.pendingUploads) ? session.pendingUploads.length : 0}`);
+  lines.push(`<b>Pending uploads:</b> ${Array.isArray(session.pendingUploads) ? session.pendingUploads.length : 0}`);
   if (session.repoStatus?.branch && session.repoStatus?.head) {
-    lines.push(`Repo: ${session.repoStatus.branch} @ ${session.repoStatus.head}${session.repoStatus.clean ? '' : ' (dirty)'}`);
+    lines.push(`<b>Repo:</b> <code>${esc(String(session.repoStatus.branch))} @ ${esc(String(session.repoStatus.head))}${session.repoStatus.clean ? '' : ' (dirty)'}</code>`);
   }
   if (session.deployStatus) {
-    lines.push(String(session.deployStatus));
+    lines.push(esc(String(session.deployStatus)));
   }
 
   if (session.lastResult) {
     lines.push(
-      `${runnerStatusEmoji(session.lastResult.status)} Last agent result: ${session.lastResult.runner} ${session.lastResult.status} ${session.lastResult.finishedAt} (${formatDuration(session.lastResult.durationMs)})`
+      `${runnerStatusEmoji(session.lastResult.status)} <b>Last agent result:</b> ${esc(String(session.lastResult.runner || ''))} ${esc(String(session.lastResult.status || ''))} ${esc(String(session.lastResult.finishedAt || ''))} (${esc(formatDuration(session.lastResult.durationMs))})`
     );
     if (session.lastResult.summary) {
-      lines.push(`📝 Summary: ${previewText(session.lastResult.summary, 180)}`);
+      lines.push(`📝 <b>Summary:</b> ${esc(previewText(session.lastResult.summary, 180))}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownStage) {
-      lines.push(`${stageEmoji(session.lastResult.lastKnownStage)} Last stage: ${session.lastResult.lastKnownStage}`);
+      lines.push(`${stageEmoji(session.lastResult.lastKnownStage)} <b>Last stage:</b> ${esc(String(session.lastResult.lastKnownStage))}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownSummary) {
-      lines.push(`📝 Last summary: ${previewText(session.lastResult.lastKnownSummary, 180)}`);
+      lines.push(`📝 <b>Last summary:</b> ${esc(previewText(session.lastResult.lastKnownSummary, 180))}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownHypothesis) {
-      lines.push(`💭 Last hypothesis: ${previewText(session.lastResult.lastKnownHypothesis, 180)}`);
+      lines.push(`💭 <b>Last hypothesis:</b> ${esc(previewText(session.lastResult.lastKnownHypothesis, 180))}`);
     }
     if (!session.lastResult.finalOutput && session.lastResult.lastKnownEvidence) {
-      lines.push(`🔎 Last evidence: ${previewText(session.lastResult.lastKnownEvidence, 180)}`);
+      lines.push(`🔎 <b>Last evidence:</b> ${esc(previewText(session.lastResult.lastKnownEvidence, 180))}`);
     }
   }
 
   if (Array.isArray(monitorStatus.runs) && monitorStatus.runs.length > 0) {
-    lines.push('', 'Last 3 monitor runs:');
+    lines.push('', '<b>Last 3 monitor runs:</b>');
     monitorStatus.runs.forEach((run: Record<string, unknown>, index: number) => {
       lines.push(
-        `${index + 1}. ${run.mode} ${run.success ? 'ok' : 'failed'} ${run.finishedAt} | alerts ${run.alertsSent}, openings ${run.facilitiesWithAvailability}, checks ${run.successfulChecks}/${run.checksAttempted}, ${formatDuration(Number(run.durationMs) || 0)}`
+        `${index + 1}. ${esc(String(run.mode || ''))} ${run.success ? 'ok' : 'failed'} ${esc(String(run.finishedAt || ''))} | alerts ${run.alertsSent}, openings ${run.facilitiesWithAvailability}, checks ${run.successfulChecks}/${run.checksAttempted}, ${formatDuration(Number(run.durationMs) || 0)}`
       );
     });
   }
@@ -263,12 +265,13 @@ function logsMessage(input: {
   session: Record<string, unknown>;
 }): string {
   const scope = String(input.scope || 'all').toLowerCase();
+  const esc = escapeHtml;
   const lines: string[] = [];
 
   if (scope === 'all' || scope === 'monitor') {
-    lines.push('Monitor events');
+    lines.push('<b>Monitor events</b>');
     if (Array.isArray(input.monitorStatus.recentEvents) && input.monitorStatus.recentEvents.length > 0) {
-      lines.push(...input.monitorStatus.recentEvents);
+      lines.push(...input.monitorStatus.recentEvents.map((e: unknown) => esc(String(e))));
     } else {
       lines.push('No recent monitor events.');
     }
@@ -276,47 +279,47 @@ function logsMessage(input: {
 
   if (scope === 'all' || scope === 'runner') {
     if (lines.length > 0) lines.push('');
-    lines.push('Runner logs');
+    lines.push('<b>Runner logs</b>');
     const activeTasks = Array.isArray(input.session.activeTasks) ? input.session.activeTasks : input.session.activeTask ? [input.session.activeTask] : [];
     if (activeTasks.length > 1) {
-      lines.push(`Active agent tasks: ${activeTasks.length}`);
+      lines.push(`<b>Active agent tasks:</b> ${activeTasks.length}`);
     }
 
     const activeTask = input.session.activeTask;
     if (activeTask) {
-      lines.push(`${runnerStatusEmoji('running')} Active ${activeTask.runner} task since ${activeTask.startedAt}`);
+      lines.push(`${runnerStatusEmoji('running')} <b>Active ${esc(String(activeTask.runner || ''))} task since ${esc(String(activeTask.startedAt || ''))}</b>`);
       if (activeTask.statusStage) {
-        lines.push(`${stageEmoji(activeTask.statusStage)} Stage: ${activeTask.statusStage}`);
+        lines.push(`${stageEmoji(activeTask.statusStage)} <b>Stage:</b> ${esc(String(activeTask.statusStage))}`);
       }
       if (activeTask.statusSummary) {
-        lines.push(`📝 Summary: ${previewText(activeTask.statusSummary, 220)}`);
+        lines.push(`📝 <b>Summary:</b> ${esc(previewText(activeTask.statusSummary, 220))}`);
       }
       if (activeTask.statusHypothesis) {
-        lines.push(`💭 Hypothesis: ${previewText(activeTask.statusHypothesis, 220)}`);
+        lines.push(`💭 <b>Hypothesis:</b> ${esc(previewText(activeTask.statusHypothesis, 220))}`);
       }
       if (activeTask.statusEvidence) {
-        lines.push(`🔎 Evidence: ${previewText(activeTask.statusEvidence, 220)}`);
+        lines.push(`🔎 <b>Evidence:</b> ${esc(previewText(activeTask.statusEvidence, 220))}`);
       }
       if (activeTask.statusDecision) {
-        lines.push(`⚖️ Decision: ${previewText(activeTask.statusDecision, 220)}`);
+        lines.push(`⚖️ <b>Decision:</b> ${esc(previewText(activeTask.statusDecision, 220))}`);
       }
       if (activeTask.statusNextStep) {
-        lines.push(`➡️ Next step: ${previewText(activeTask.statusNextStep, 220)}`);
+        lines.push(`➡️ <b>Next step:</b> ${esc(previewText(activeTask.statusNextStep, 220))}`);
       }
       if (Array.isArray(activeTask.changedFiles) && activeTask.changedFiles.length > 0) {
         lines.push(
-          `Changed files: ${activeTask.changedFiles.join(', ')}${
+          `<b>Changed files:</b> <code>${esc(activeTask.changedFiles.join(', '))}${
             Number(activeTask.changedFileCount) > activeTask.changedFiles.length
               ? ` (+${Number(activeTask.changedFileCount) - activeTask.changedFiles.length} more)`
               : ''
-          }`
+          }</code>`
         );
       }
       if (activeTask.stdoutTail) {
-        lines.push('', '📤 live stdout tail:', tailText(activeTask.stdoutTail, 1400));
+        lines.push('', '📤 <b>live stdout tail:</b>', `<pre>${esc(tailText(activeTask.stdoutTail, 1400))}</pre>`);
       }
       if (activeTask.stderrTail) {
-        lines.push('', '⚠️ live stderr tail:', tailText(activeTask.stderrTail, 1200));
+        lines.push('', '⚠️ <b>live stderr tail:</b>', `<pre>${esc(tailText(activeTask.stderrTail, 1200))}</pre>`);
       }
       if (!activeTask.stdoutTail && !activeTask.stderrTail) {
         lines.push('No live stdout or stderr yet.');
@@ -326,38 +329,38 @@ function logsMessage(input: {
     const result = input.session.lastResult;
     if (result) {
       if (activeTask) {
-        lines.push('', 'Last completed runner result');
+        lines.push('', '<b>Last completed runner result</b>');
       }
-      lines.push(`${runnerStatusEmoji(result.status)} ${result.runner} ${result.status} at ${result.finishedAt}`);
+      lines.push(`${runnerStatusEmoji(result.status)} <b>${esc(String(result.runner || ''))} ${esc(String(result.status || ''))} at ${esc(String(result.finishedAt || ''))}</b>`);
       if (result.summary) {
-        lines.push(`📝 Summary: ${previewText(result.summary, 220)}`);
+        lines.push(`📝 <b>Summary:</b> ${esc(previewText(result.summary, 220))}`);
       }
       if (result.lastKnownStage) {
-        lines.push(`${stageEmoji(result.lastKnownStage)} Last stage: ${result.lastKnownStage}`);
+        lines.push(`${stageEmoji(result.lastKnownStage)} <b>Last stage:</b> ${esc(String(result.lastKnownStage))}`);
       }
       if (result.lastKnownSummary) {
-        lines.push(`📝 Last summary: ${previewText(result.lastKnownSummary, 220)}`);
+        lines.push(`📝 <b>Last summary:</b> ${esc(previewText(result.lastKnownSummary, 220))}`);
       }
       if (result.lastKnownHypothesis) {
-        lines.push(`💭 Last hypothesis: ${previewText(result.lastKnownHypothesis, 220)}`);
+        lines.push(`💭 <b>Last hypothesis:</b> ${esc(previewText(result.lastKnownHypothesis, 220))}`);
       }
       if (result.lastKnownEvidence) {
-        lines.push(`🔎 Last evidence: ${previewText(result.lastKnownEvidence, 220)}`);
+        lines.push(`🔎 <b>Last evidence:</b> ${esc(previewText(result.lastKnownEvidence, 220))}`);
       }
       if (result.lastKnownDecision) {
-        lines.push(`⚖️ Last decision: ${previewText(result.lastKnownDecision, 220)}`);
+        lines.push(`⚖️ <b>Last decision:</b> ${esc(previewText(result.lastKnownDecision, 220))}`);
       }
       if (result.lastKnownNextStep) {
-        lines.push(`➡️ Last next step: ${previewText(result.lastKnownNextStep, 220)}`);
+        lines.push(`➡️ <b>Last next step:</b> ${esc(previewText(result.lastKnownNextStep, 220))}`);
       }
       if (result.stdoutTail) {
-        lines.push('', '📤 stdout tail:', tailText(result.stdoutTail, 1400));
+        lines.push('', '📤 <b>stdout tail:</b>', `<pre>${esc(tailText(result.stdoutTail, 1400))}</pre>`);
       }
       if (result.stderrTail) {
-        lines.push('', '⚠️ stderr tail:', tailText(result.stderrTail, 1200));
+        lines.push('', '⚠️ <b>stderr tail:</b>', `<pre>${esc(tailText(result.stderrTail, 1200))}</pre>`);
       }
       if (result.keptWorktreePath) {
-        lines.push('', `kept worktree: ${relativeDisplayPath(result.keptWorktreePath, config.ROOT_DIR)}`);
+        lines.push('', `<b>Kept worktree:</b> <code>${esc(relativeDisplayPath(result.keptWorktreePath, config.ROOT_DIR))}</code>`);
       }
     }
 
@@ -371,20 +374,20 @@ function logsMessage(input: {
 
 function uploadQueuedMessage(uploads: Array<Record<string, unknown>>, totalPending: number): string {
   const names = uploads.map((upload) => upload.fileName || upload.kind).slice(0, 3).join(', ');
-  return `Queued ${uploads.length} upload${uploads.length === 1 ? '' : 's'} for the next task. Pending now: ${totalPending}.${names ? ` Files: ${names}` : ''}`;
+  return `Queued ${uploads.length} upload${uploads.length === 1 ? '' : 's'} for the next task. Pending now: ${totalPending}.${names ? ` Files: <code>${escapeHtml(names)}</code>` : ''}`;
 }
 
 function runnerStartedMessage(activeTask: Record<string, unknown>): string {
   const lines = [
-    `Starting ${String(activeTask.runner)}.`,
-    `Task: ${previewText(activeTask.promptPreview, 140) || 'no prompt preview'}`,
+    `<b>Starting ${escapeHtml(String(activeTask.runner || ''))}.</b>`,
+    `<b>Task:</b> ${escapeHtml(previewText(activeTask.promptPreview, 140) || 'no prompt preview')}`,
   ];
   if (activeTask.uploadCount) {
-    lines.push(`Uploads: ${activeTask.uploadCount}`);
+    lines.push(`<b>Uploads:</b> ${activeTask.uploadCount}`);
   }
   lines.push('I will stream live tool activity, partial reply text, status, and file changes when available.');
   if (Array.isArray(activeTask.warnings) && activeTask.warnings.length > 0) {
-    lines.push(`Warnings: ${activeTask.warnings.join(' | ')}`);
+    lines.push(`<b>Warnings:</b> ${escapeHtml(activeTask.warnings.join(' | '))}`);
   }
   return lines.join('\n');
 }
@@ -448,7 +451,7 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   if (status !== 'running' && input.finalOutput) {
     const finalOutputPreview = previewLastLines(input.finalOutput, 10, 900) || previewText(input.finalOutput, 900);
     if (finalOutputPreview) {
-      sections.push([`💬 <b>Result:</b>`, escapeHtml(finalOutputPreview)]);
+      sections.push([`💬 <b>Result:</b>`, finalOutputPreview]);
     }
   }
 
@@ -478,8 +481,8 @@ function manualRunStartedMessage(scope: Record<string, unknown>): string {
   const targetCount = Number(scope.targetCount) || 0;
   const rangeCount = Number(scope.rangeCount) || 0;
   return [
-    'Starting a manual campsite check now.',
-    `Scope: ${totalChecks} checks across ${targetCount} campground targets and ${rangeCount} date ranges.`,
+    '<b>Starting a manual campsite check now.</b>',
+    `<b>Scope:</b> ${totalChecks} checks across ${targetCount} campground targets and ${rangeCount} date ranges.`,
     'Typical runtime: about 35-45s.',
   ].join('\n');
 }
@@ -495,14 +498,14 @@ function manualRunProgressMessage(activeRun: Record<string, unknown>): string {
   const currentFacilityName = sanitizeText(activeRun.currentFacilityName || '');
   const currentRangeLabel = sanitizeText(activeRun.currentRangeLabel || '');
 
-  const lines = [`Manual campsite check running for ${formatDuration(elapsedMs)}.`];
+  const lines = [`<b>Manual campsite check running for ${formatDuration(elapsedMs)}.</b>`];
   if (totalChecks > 0) {
-    lines.push(`Progress: ${checksAttempted}/${totalChecks} checks, ${successfulChecks} successful responses.`);
+    lines.push(`<b>Progress:</b> ${checksAttempted}/${totalChecks} checks, ${successfulChecks} successful responses.`);
   }
   if (currentParkName && currentFacilityName && currentRangeLabel) {
-    lines.push(`Current: ${currentParkName} / ${currentFacilityName} / ${currentRangeLabel}`);
+    lines.push(`<b>Current:</b> ${escapeHtml(currentParkName)} / ${escapeHtml(currentFacilityName)} / ${escapeHtml(currentRangeLabel)}`);
   }
-  lines.push(`Openings found so far: ${facilitiesWithAvailability}`);
+  lines.push(`<b>Openings found so far:</b> ${facilitiesWithAvailability}`);
   return lines.join('\n');
 }
 
@@ -542,39 +545,41 @@ function runnerProgressMessage(progress: Record<string, unknown>): string {
 }
 
 function runnerResultMessage(result: Record<string, unknown>, rootDir: string): string {
+  const esc = escapeHtml;
   const lines = [
-    `${runnerStatusEmoji(result.status)} ${String(result.runner)} ${String(result.status)} in ${formatDuration(Number(result.durationMs) || 0)}.`,
+    `${runnerStatusEmoji(result.status)} <b>${esc(String(result.runner || ''))} ${esc(String(result.status || ''))} in ${formatDuration(Number(result.durationMs) || 0)}.</b>`,
   ];
 
   if (result.finalOutput) {
     lines.push('', String(result.finalOutput));
   } else if (result.summary) {
-    lines.push('', String(result.summary));
+    lines.push('', esc(String(result.summary)));
   }
 
-  if (!result.finalOutput && result.lastKnownStage) lines.push(`${stageEmoji(result.lastKnownStage)} Last stage: ${result.lastKnownStage}`);
-  if (!result.finalOutput && result.lastKnownSummary) lines.push(`📝 Last summary: ${result.lastKnownSummary}`);
-  if (!result.finalOutput && result.lastKnownHypothesis) lines.push(`💭 Last hypothesis: ${result.lastKnownHypothesis}`);
-  if (!result.finalOutput && result.lastKnownEvidence) lines.push(`🔎 Last evidence: ${result.lastKnownEvidence}`);
-  if (!result.finalOutput && result.lastKnownDecision) lines.push(`⚖️ Last decision: ${result.lastKnownDecision}`);
-  if (!result.finalOutput && result.lastKnownNextStep) lines.push(`➡️ Last next step: ${result.lastKnownNextStep}`);
+  if (!result.finalOutput && result.lastKnownStage) lines.push(`${stageEmoji(result.lastKnownStage)} <b>Last stage:</b> ${esc(String(result.lastKnownStage))}`);
+  if (!result.finalOutput && result.lastKnownSummary) lines.push(`📝 <b>Last summary:</b> ${esc(String(result.lastKnownSummary))}`);
+  if (!result.finalOutput && result.lastKnownHypothesis) lines.push(`💭 <b>Last hypothesis:</b> ${esc(String(result.lastKnownHypothesis))}`);
+  if (!result.finalOutput && result.lastKnownEvidence) lines.push(`🔎 <b>Last evidence:</b> ${esc(String(result.lastKnownEvidence))}`);
+  if (!result.finalOutput && result.lastKnownDecision) lines.push(`⚖️ <b>Last decision:</b> ${esc(String(result.lastKnownDecision))}`);
+  if (!result.finalOutput && result.lastKnownNextStep) lines.push(`➡️ <b>Last next step:</b> ${esc(String(result.lastKnownNextStep))}`);
 
-  if (result.branchName) lines.push('', `Branch: ${result.branchName}`);
-  if (result.commitSha) lines.push(`Commit: ${result.commitSha}`);
+  if (result.branchName) lines.push('', `<b>Branch:</b> <code>${esc(String(result.branchName))}</code>`);
+  if (result.commitSha) lines.push(`<b>Commit:</b> <code>${esc(String(result.commitSha))}</code>`);
   if (Array.isArray(result.changedFiles) && result.changedFiles.length > 0) {
-    lines.push(`Files: ${result.changedFiles.join(', ')}`);
+    lines.push(`<b>Files:</b> <code>${esc(result.changedFiles.join(', '))}</code>`);
   }
   if (result.keptWorktreePath) {
-    lines.push(`Worktree kept: ${relativeDisplayPath(String(result.keptWorktreePath), rootDir)}`);
+    lines.push(`<b>Worktree kept:</b> <code>${esc(relativeDisplayPath(String(result.keptWorktreePath), rootDir))}</code>`);
   }
   if (Array.isArray(result.warnings) && result.warnings.length > 0) {
-    lines.push(`⚠️ Warnings: ${result.warnings.join(' | ')}`);
+    lines.push(`⚠️ <b>Warnings:</b> ${esc(result.warnings.join(' | '))}`);
   }
 
   return lines.join('\n');
 }
 
 module.exports = {
+  escapeHtml,
   helpMessage,
   logsMessage,
   manualRunProgressMessage,
