@@ -34,10 +34,14 @@ const TARGETS = [
   { facilityId: 376, parkName: 'El Capitan SB', facilityName: 'Lower Section', tier: 2 },
   { facilityId: 377, parkName: 'El Capitan SB', facilityName: 'Middle Section', tier: 2 },
   { facilityId: 379, parkName: 'El Capitan SB', facilityName: 'Upper Section', tier: 2 },
+  { facilityId: 562, parkName: 'Malibu Creek SP', facilityName: 'Creek Campground', tier: 2 },
+  { facilityId: 491, parkName: 'Gaviota SP', facilityName: 'Gaviota Campground', tier: 2 },
   { facilityId: 539, parkName: 'Leo Carrillo SP', facilityName: 'Canyon 1-24, 78-133', tier: 3 },
   { facilityId: 542, parkName: 'Leo Carrillo SP', facilityName: 'Canyon 25-77', tier: 3 },
   { facilityId: 2031, parkName: 'Point Mugu SP', facilityName: 'Thornhill Broome', tier: 3 },
   { facilityId: 624, parkName: 'Point Mugu SP', facilityName: 'Sycamore Canyon', tier: 3 },
+  { facilityId: 417, parkName: 'Bolsa Chica SB', facilityName: 'Campground 1-31 (RV)', tier: 3 },
+  { facilityId: 418, parkName: 'Bolsa Chica SB', facilityName: 'Campground 32-57 (RV)', tier: 3 },
 ];
 
 const DATE_RANGES = [
