@@ -56,6 +56,7 @@ class CampgroundMonitor {
       activeRun: null,
       runs: [],
       recentEvents: [],
+      dailyStats: null,
     };
   }
 
@@ -344,6 +345,7 @@ class CampgroundMonitor {
     this.saveState(state);
 
     const alerts: string[] = [];
+    const newOpenings: Array<{ parkName: string; facilityName: string; rangeLabel: string; available: number }> = [];
     let facilitiesWithAvailability = 0;
     const now = Date.now();
 
@@ -382,6 +384,7 @@ class CampgroundMonitor {
           if (result.available > 0) {
             facilitiesWithAvailability += 1;
             alerts.push(this.formatAlert(target, range, result));
+            newOpenings.push({ parkName: String(target.parkName), facilityName: String(target.facilityName), rangeLabel: String(range.label), available: result.available });
             state.alerted[key] = now;
             this.recordEvent(state, `Availability found at ${target.parkName} ${target.facilityName} (${range.label})`);
           }
@@ -425,6 +428,18 @@ class CampgroundMonitor {
       run.alertsSent = alerts.length;
       run.facilitiesWithAvailability = facilitiesWithAvailability;
       this.recordEvent(state, `Completed ${mode} run: ${alerts.length} alerts, ${facilitiesWithAvailability} openings`);
+
+      const todayDate = this.localDateString();
+      const existingDaily = state.dailyStats as Record<string, unknown> | null;
+      if (!existingDaily || existingDaily.date !== todayDate) {
+        state.dailyStats = { date: todayDate, totalRuns: 0, successfulRuns: 0, openings: [] };
+      }
+      const daily = state.dailyStats as Record<string, unknown>;
+      daily.totalRuns = (Number(daily.totalRuns) || 0) + 1;
+      daily.successfulRuns = (Number(daily.successfulRuns) || 0) + 1;
+      if (newOpenings.length > 0) {
+        daily.openings = [...(Array.isArray(daily.openings) ? daily.openings : []), ...newOpenings];
+      }
     } catch (error) {
       state.lastError = error instanceof Error ? error.message : String(error);
       run.errors.push(state.lastError);
@@ -489,6 +504,11 @@ class CampgroundMonitor {
     await this.startScheduler();
   }
 
+  localDateString(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
   latestRunSummary(): string {
     const state = this.loadState();
     const latest = state.runs[state.runs.length - 1];
@@ -496,6 +516,57 @@ class CampgroundMonitor {
       return 'No completed monitor run yet.';
     }
     return `Latest run: ${latest.mode} ${latest.success ? 'ok' : 'failed'} at ${latest.finishedAt}. Alerts ${latest.alertsSent}, openings ${latest.facilitiesWithAvailability}, checks ${latest.successfulChecks}/${latest.checksAttempted}, duration ${Math.round(latest.durationMs / 1000)}s.`;
+  }
+
+  getDailySummaryMessage(): string {
+    const state = this.loadState();
+    const todayDate = this.localDateString();
+    const daily = (state.dailyStats && (state.dailyStats as Record<string, unknown>).date === todayDate)
+      ? (state.dailyStats as Record<string, unknown>)
+      : null;
+
+    const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+    const parks: string[] = [];
+    const seenParks = new Set<string>();
+    for (const target of TARGETS) {
+      if (!seenParks.has(String(target.parkName))) {
+        seenParks.add(String(target.parkName));
+        parks.push(String(target.parkName));
+      }
+    }
+
+    const lines = [`📊 <b>Daily Summary — ${dateLabel}</b>`];
+
+    if (daily) {
+      const totalRuns = Number(daily.totalRuns) || 0;
+      const successfulRuns = Number(daily.successfulRuns) || 0;
+      const intervalMin = Math.round(config.CHECK_INTERVAL_MS / 60000);
+      lines.push(`\nRan <b>${totalRuns}</b> checks today (${successfulRuns} successful, every ${intervalMin} min)`);
+    } else {
+      lines.push('\nNo checks recorded today yet.');
+    }
+
+    lines.push(`\n🏕️ Monitoring: ${parks.join(', ')}`);
+
+    const openings = daily && Array.isArray(daily.openings) ? daily.openings as Array<Record<string, unknown>> : [];
+    if (openings.length === 0) {
+      lines.push('\n✅ No openings found today. Keep watching!');
+    } else {
+      const seen = new Map<string, number>();
+      for (const o of openings) {
+        const key = `${o.parkName}|${o.facilityName}|${o.rangeLabel}`;
+        seen.set(key, Math.max(seen.get(key) || 0, Number(o.available) || 0));
+      }
+      lines.push(`\n🔔 <b>${seen.size} opening(s) found today:</b>`);
+      for (const [key, count] of seen.entries()) {
+        const [parkName, facilityName, rangeLabel] = key.split('|');
+        lines.push(`  • ${parkName} — ${facilityName} (${rangeLabel}): ${count} site(s)`);
+      }
+      lines.push('\n🔗 https://www.reservecalifornia.com');
+    }
+
+    return lines.join('\n');
   }
 
   getStatus(): Record<string, unknown> {

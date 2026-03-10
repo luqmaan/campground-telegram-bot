@@ -13,10 +13,11 @@ const {
   uploadQueuedMessage,
   usersMessage,
 } = require('./commands.ts');
-const { extractMessageUploads } = require('./media.ts');
+const { extractMessageUploads, uploadsPromptBlock } = require('./media.ts');
 const { applyRef, deployStatusMessage, repoSummary, scheduleDeploy, shouldDeployFiles } = require('./repo-actions.ts');
 const { startClaudeTask } = require('./runner-claude.ts');
 const { startCodexTask } = require('./runner-codex.ts');
+const { appendTaskSteer } = require('./runner-common.ts');
 const { ensureDir, nowIso, previewText, sanitizeText } = require('./utils.ts');
 
 type TelegramMessage = {
@@ -264,6 +265,34 @@ function latestActiveTaskHandle(chatId: string | number): Record<string, unknown
   return latestTask ? taskHandle(String(latestTask.id)) : undefined;
 }
 
+function taskWorkspacePath(activeTask?: Record<string, unknown> | null): string {
+  if (activeTask?.worktreePath) {
+    return String(activeTask.worktreePath);
+  }
+  return config.ROOT_DIR;
+}
+
+function interactiveSteerText(input: {
+  sender: string;
+  prompt: string;
+  replyContext: string | null;
+  uploads: Array<Record<string, unknown>>;
+}): string {
+  const prompt =
+    sanitizeText(input.prompt) || (input.uploads.length > 0 ? 'Review the attached files and adjust your work accordingly.' : '');
+  const parts = [`Telegram steer from ${input.sender}.`];
+  if (input.replyContext) {
+    parts.push('Reply context:', input.replyContext);
+  }
+  if (input.uploads.length > 0) {
+    parts.push('Attached local files:', uploadsPromptBlock(input.uploads, config.ROOT_DIR));
+  }
+  if (prompt) {
+    parts.push(`Latest Telegram message from ${input.sender}:`, prompt);
+  }
+  return parts.join('\n\n');
+}
+
 function sessionSnapshot(chatId: string | number, taskId: string | null = null): Record<string, unknown> {
   const session = sessionStore.getSession(chatId);
   return {
@@ -307,7 +336,7 @@ async function upsertRunnerTaskCard(input: {
 }): Promise<void> {
   if (!input.activeTask) return;
 
-  const text = runnerCardMessage({
+  const { card, overflow } = runnerCardMessage({
     status: input.result ? input.result.status : 'running',
     runner: input.activeTask.runner,
     promptPreview: input.activeTask.promptPreview,
@@ -339,18 +368,24 @@ async function upsertRunnerTaskCard(input: {
   });
 
   if (input.activeTask.cardMessageId) {
-    await editTelegramSingle(input.chatId, Number(input.activeTask.cardMessageId), text, {
+    await editTelegramSingle(input.chatId, Number(input.activeTask.cardMessageId), card, {
       replyMarkup: runnerTaskKeyboard(!input.result),
       html: true,
     });
+    if (overflow) {
+      await sendTelegram(input.chatId, overflow, { threadId: input.threadId });
+    }
     return;
   }
 
-  const sent = await sendTelegramSingle(input.chatId, text, {
+  const sent = await sendTelegramSingle(input.chatId, card, {
     threadId: input.threadId,
     replyMarkup: runnerTaskKeyboard(true),
     html: true,
   });
+  if (overflow) {
+    await sendTelegram(input.chatId, overflow, { threadId: input.threadId });
+  }
   sessionStore.setTaskCard(input.chatId, String(input.activeTask.id), {
     messageId: Number(sent.message_id) || null,
     threadId: input.threadId ?? null,
@@ -412,6 +447,7 @@ async function startRunnerForMessage(input: {
   threadId: number | null | undefined;
   runner: 'claude' | 'codex';
   prompt: string;
+  resumeSessionId?: string | null;
   message: TelegramMessage;
   immediateUploads: Array<Record<string, unknown>>;
   replyContext: string | null;
@@ -451,6 +487,7 @@ async function startRunnerForMessage(input: {
     historyContext: sessionStore.historyContext(chatId),
     statusContext: currentStatusMessage(chatId),
     senderName: sender,
+    resumeSessionId: input.resumeSessionId || null,
     onProgress: async (progress: Record<string, unknown>) => {
       const progressTaskId = String(progress.taskId || handle.meta.id);
       sessionStore.setTaskProgress(chatId, progressTaskId, progress);
@@ -526,6 +563,7 @@ async function startRunnerForMessage(input: {
       const failedResult = {
         id: failedTaskId,
         runner: input.runner,
+        sessionId: activeTask.sessionId || null,
         status: 'failed',
         summary: error.message,
         finalOutput: null,
@@ -583,7 +621,7 @@ async function reconcileInterruptedTaskCards(
 ): Promise<void> {
   for (const repaired of repairedTasks) {
     try {
-      const text = runnerCardMessage({
+      const { card } = runnerCardMessage({
         status: repaired.result.status,
         runner: repaired.activeTask.runner,
         promptPreview: repaired.activeTask.promptPreview,
@@ -609,7 +647,7 @@ async function reconcileInterruptedTaskCards(
       });
 
       if (repaired.cardMessageId) {
-        await editTelegramSingle(repaired.chatId, repaired.cardMessageId, text, {
+        await editTelegramSingle(repaired.chatId, repaired.cardMessageId, card, {
           replyMarkup: runnerTaskKeyboard(false),
           html: true,
         });
@@ -629,6 +667,7 @@ async function handleRunnerCommand(input: {
   message: TelegramMessage;
   uploads: Array<Record<string, unknown>>;
   replyContext: string | null;
+  resumeSessionId?: string | null;
 }): Promise<void> {
   const chatId = input.message.chat.id;
   const threadId = input.message.message_thread_id;
@@ -637,10 +676,93 @@ async function handleRunnerCommand(input: {
     threadId,
     runner: input.command.runner,
     prompt: String(input.command.prompt || ''),
+    resumeSessionId: input.resumeSessionId || null,
     message: input.message,
     immediateUploads: input.uploads,
     replyContext: input.replyContext,
   });
+}
+
+async function steerRunnerTask(input: {
+  chatId: string | number;
+  threadId: number | null | undefined;
+  taskId: string;
+  activeTask: Record<string, unknown>;
+  message: TelegramMessage;
+  command: Record<string, unknown>;
+  replyContext: string | null;
+  uploads: Array<Record<string, unknown>>;
+}): Promise<void> {
+  const sender = displayName(profileFromTelegramUser(input.message.from || {}));
+  const steerText = input.command.type === 'runner' ? sanitizeText(input.command.prompt || '') : '';
+  if (!steerText && input.uploads.length === 0) {
+    await sendTelegram(input.chatId, 'Send text or attach files to steer that running agent.', { threadId: input.threadId });
+    return;
+  }
+
+  const liveTask = taskHandle(input.taskId) || null;
+  const directSteerText = interactiveSteerText({
+    sender,
+    prompt: steerText,
+    replyContext: input.replyContext,
+    uploads: input.uploads,
+  });
+
+  if (input.activeTask.runner === 'claude' && liveTask && typeof liveTask.steer === 'function') {
+    try {
+      const ok = Boolean(liveTask.steer(directSteerText));
+      if (!ok) {
+        throw new Error('Claude stdin is no longer accepting steer messages.');
+      }
+    } catch (error) {
+      await sendTelegram(
+        input.chatId,
+        `Failed to steer running Claude task: ${error instanceof Error ? error.message : String(error)}`,
+        { threadId: input.threadId }
+      );
+      return;
+    }
+  } else {
+    try {
+      appendTaskSteer({
+        cwd: taskWorkspacePath(input.activeTask),
+        senderName: sender,
+        text: steerText,
+        uploads: input.uploads,
+        at: nowIso(),
+      });
+    } catch (error) {
+      await sendTelegram(
+        input.chatId,
+        `Failed to steer running ${String(input.activeTask.runner || 'agent')} task: ${error instanceof Error ? error.message : String(error)}`,
+        { threadId: input.threadId }
+      );
+      return;
+    }
+  }
+
+  const historyParts = [];
+  if (steerText) {
+    historyParts.push(steerText);
+  }
+  if (input.uploads.length > 0) {
+    historyParts.push(`Steer attachments: ${input.uploads.map((upload) => upload.fileName || upload.kind).join(', ')}`);
+  }
+  sessionStore.addHistory(input.chatId, 'user', `${sender}: [steer ${input.taskId}] ${historyParts.join('\n')}`);
+
+  const lines = [`Steer sent to running ${String(input.activeTask.runner || 'agent')} task.`];
+  if (steerText) {
+    lines.push(`Text: ${previewText(steerText, 160)}`);
+  }
+  if (input.uploads.length > 0) {
+    lines.push(`Attachments: ${input.uploads.length}`);
+  }
+  lines.push(
+    input.activeTask.runner === 'claude' && liveTask && typeof liveTask.steer === 'function'
+      ? 'It was injected into the live Claude session for this run.'
+      : 'It will pick this up from the live steer inbox during the current run.'
+  );
+  await sendTelegram(input.chatId, lines.join('\n'), { threadId: input.threadId });
 }
 
 async function handleCommand(message: TelegramMessage, uploads: Array<Record<string, unknown>>): Promise<void> {
@@ -656,6 +778,27 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
       : parsedCommand;
   const sessionBefore = sessionStore.getSession(chatId);
   const selectedTaskId = route ? String(route.taskId) : null;
+  const selectedActiveTask = selectedTaskId ? sessionStore.getActiveTask(chatId, selectedTaskId) : null;
+  const selectedResult = selectedTaskId ? sessionStore.findResult(chatId, selectedTaskId) : null;
+  const selectedTaskIsRunning = Boolean(selectedTaskId && selectedActiveTask && taskHandle(selectedTaskId));
+  const resumeSessionId =
+    !selectedTaskIsRunning && command.type === 'runner' && command.runner === 'claude' && selectedResult?.sessionId
+      ? String(selectedResult.sessionId)
+      : null;
+
+  if (selectedTaskIsRunning && (command.type === 'runner' || (command.type === 'empty' && uploads.length > 0))) {
+    await steerRunnerTask({
+      chatId,
+      threadId,
+      taskId: selectedTaskId,
+      activeTask: selectedActiveTask,
+      message,
+      command,
+      replyContext,
+      uploads,
+    });
+    return;
+  }
 
   if (command.type === 'empty') {
     if (uploads.length > 0) {
@@ -782,6 +925,7 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
       message,
       uploads,
       replyContext,
+      resumeSessionId,
     });
     return;
   }
@@ -932,6 +1076,32 @@ async function pollLoop(): Promise<void> {
   }
 }
 
+function msUntilDailySummary(hour = 20): number {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(hour, 0, 0, 0);
+  if (target <= now) {
+    target.setDate(target.getDate() + 1);
+  }
+  return target.getTime() - now.getTime();
+}
+
+function scheduleDailySummary(): void {
+  const delay = msUntilDailySummary(20);
+  const h = Math.floor(delay / 3600000);
+  const m = Math.floor((delay % 3600000) / 60000);
+  log('INFO', `Daily summary scheduled in ${h}h ${m}m`);
+  setTimeout(async () => {
+    try {
+      const message = monitor.getDailySummaryMessage();
+      await sendTelegram(config.GROUP_CHAT_ID, message, { html: true });
+    } catch (error) {
+      log('WARN', 'Failed to send daily summary', error instanceof Error ? error.message : String(error));
+    }
+    scheduleDailySummary();
+  }, delay);
+}
+
 async function main(): Promise<void> {
   ensureDir(config.DATA_DIR);
   ensureDir(config.LOG_DIR);
@@ -950,6 +1120,7 @@ async function main(): Promise<void> {
     await reconcileInterruptedTaskCards(repairedTasks);
   }
   await monitor.startScheduler();
+  scheduleDailySummary();
   await pollLoop();
 }
 

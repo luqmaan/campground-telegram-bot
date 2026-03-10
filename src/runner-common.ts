@@ -33,6 +33,7 @@ type UploadRecord = {
 type TaskResult = {
   id: string;
   runner: RunnerName;
+  sessionId?: string | null;
   status: 'completed' | 'failed' | 'cancelled' | 'timeout';
   summary: string;
   finalOutput: string | null;
@@ -55,6 +56,8 @@ type TaskResult = {
 };
 
 const TASK_STATUS_FILE_NAME = '.campground-runner-status.json';
+const TASK_STEER_FILE_NAME = '.campground-runner-steer.txt';
+const TASK_STEER_UPLOAD_DIR_NAME = '.campground-runner-steer-uploads';
 type TaskStatusSnapshot = {
   stage: string;
   summary: string;
@@ -247,6 +250,80 @@ function taskStatusPath(cwd: string): string {
   return path.join(cwd, TASK_STATUS_FILE_NAME);
 }
 
+function taskSteerPath(cwd: string): string {
+  return path.join(cwd, TASK_STEER_FILE_NAME);
+}
+
+function taskSteerUploadDir(cwd: string): string {
+  return path.join(cwd, TASK_STEER_UPLOAD_DIR_NAME);
+}
+
+function initializeTaskSteerInbox(cwd: string): void {
+  fs.writeFileSync(
+    taskSteerPath(cwd),
+    [
+      'Live Telegram steer inbox for this task.',
+      'Read this file again before major edits, before tests, and immediately before the final reply.',
+      'New entries are appended at the bottom.',
+      '',
+    ].join('\n')
+  );
+  fs.rmSync(taskSteerUploadDir(cwd), { recursive: true, force: true });
+  ensureDir(taskSteerUploadDir(cwd));
+}
+
+function appendTaskSteer(input: {
+  cwd: string;
+  senderName: string;
+  text?: string | null;
+  uploads?: UploadRecord[];
+  at?: string | null;
+}): { filePath: string; uploadCount: number; copiedUploads: string[] } {
+  const cwd = String(input.cwd || '');
+  if (!cwd) {
+    throw new Error('Missing task workspace.');
+  }
+
+  if (!fs.existsSync(taskSteerPath(cwd))) {
+    initializeTaskSteerInbox(cwd);
+  }
+
+  const copiedUploads: string[] = [];
+  const uploadLines: string[] = [];
+  const uploads = Array.isArray(input.uploads) ? input.uploads : [];
+  if (uploads.length > 0) {
+    ensureDir(taskSteerUploadDir(cwd));
+    for (const upload of uploads) {
+      const fileName = safeFileName(upload.fileName || upload.kind || 'upload', upload.kind || 'upload');
+      const destPath = path.join(taskSteerUploadDir(cwd), `${Date.now()}-${fileName}`);
+      fs.copyFileSync(String(upload.localPath), destPath);
+      const relativePath = relativeDisplayPath(destPath, cwd);
+      copiedUploads.push(relativePath);
+      uploadLines.push(`- ${upload.kind}: ${relativePath}${upload.mimeType ? ` (${upload.mimeType})` : ''}`);
+    }
+  }
+
+  const lines = [
+    `## ${sanitizeText(input.at || nowIso())} | ${sanitizeText(input.senderName || 'Unknown sender')}`,
+  ];
+  const steerText = sanitizeText(input.text || '');
+  if (steerText) {
+    lines.push(`Text: ${steerText}`);
+  }
+  if (uploadLines.length > 0) {
+    lines.push('Attachments:');
+    lines.push(...uploadLines);
+  }
+  lines.push('');
+
+  fs.appendFileSync(taskSteerPath(cwd), `${lines.join('\n')}\n`);
+  return {
+    filePath: taskSteerPath(cwd),
+    uploadCount: uploads.length,
+    copiedUploads,
+  };
+}
+
 function readTaskStatus(cwd: string): TaskStatusSnapshot | null {
   const statusFile = taskStatusPath(cwd);
   if (!fs.existsSync(statusFile)) return null;
@@ -321,12 +398,41 @@ function buildSummary(
   return previewText(`${prefix}${details ? ` ${details}` : ''}`, config.RUNNER_SUMMARY_CHARS) || prefix;
 }
 
+function claudeUserInputLine(messageText: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: String(messageText || ''),
+    },
+  });
+}
+
+function claudeInterruptLine(): string {
+  return JSON.stringify({
+    type: 'control_request',
+    request_id: makeId('interrupt'),
+    request: {
+      subtype: 'interrupt',
+    },
+  });
+}
+
+function claudeResultStatus(event: Record<string, unknown>): TaskResult['status'] {
+  const subtype = sanitizeText(event.subtype || '').toLowerCase();
+  if (subtype === 'success' && !event.is_error) {
+    return 'completed';
+  }
+  return 'failed';
+}
+
 function startRunnerTask(options: {
   runner: RunnerName;
   promptText: string;
   promptPreview: string;
   uploads: UploadRecord[];
   timeoutSeconds: number;
+  resumeSessionId?: string | null;
   buildCommand: (context: Record<string, unknown>) => Record<string, unknown>;
   onProgress?: (progress: Record<string, unknown>) => Promise<void> | void;
 }): Record<string, unknown> {
@@ -346,6 +452,7 @@ function startRunnerTask(options: {
       uploads: options.uploads,
       promptFile,
       branchName: workspace.branchName,
+      resumeSessionId: options.resumeSessionId || null,
       taskId,
       slug,
     });
@@ -357,6 +464,7 @@ function startRunnerTask(options: {
       meta: {
         id: taskId,
         runner: options.runner,
+        sessionId: options.resumeSessionId || null,
         promptPreview: previewText(options.promptPreview, 160),
         startedAt: startedAtIso,
         pid: null,
@@ -370,6 +478,7 @@ function startRunnerTask(options: {
       promise: Promise.resolve({
         id: taskId,
         runner: options.runner,
+        sessionId: options.resumeSessionId || null,
         status: 'failed',
         summary: warnings[warnings.length - 1],
         finalOutput: null,
@@ -398,6 +507,7 @@ function startRunnerTask(options: {
   try {
     fs.rmSync(statusFilePath, { force: true });
   } catch {}
+  initializeTaskSteerInbox(String(workspace.cwd));
   const baselineChangedFiles = changedFilesSince(String(workspace.cwd), []);
 
   let child;
@@ -419,6 +529,7 @@ function startRunnerTask(options: {
       meta: {
         id: taskId,
         runner: options.runner,
+        sessionId: options.resumeSessionId || null,
         promptPreview: previewText(options.promptPreview, 160),
         startedAt: startedAtIso,
         pid: null,
@@ -432,6 +543,7 @@ function startRunnerTask(options: {
       promise: Promise.resolve({
         id: taskId,
         runner: options.runner,
+        sessionId: options.resumeSessionId || null,
         status: 'failed',
         summary: warnings[warnings.length - 1],
         finalOutput: null,
@@ -455,8 +567,7 @@ function startRunnerTask(options: {
     };
   }
 
-  child.stdin.end(options.promptText);
-
+  const interactiveClaude = commandSpec.streamFormat === 'claude-stream-json' && commandSpec.stdinMode === 'claude-json-input';
   let cancelled = false;
   let stdout = '';
   let stderr = '';
@@ -470,6 +581,12 @@ function startRunnerTask(options: {
   let parsedFinalOutput: string | null = null;
   let stdoutJsonBuffer = '';
   let textBlockOpen = false;
+  let claudeSessionId: string | null = sanitizeText(options.resumeSessionId || commandSpec.resumeSessionId || '') || null;
+  let claudeExpectedResults = interactiveClaude ? 1 : 0;
+  let claudeSeenResults = 0;
+  let claudeTurnInProgress = interactiveClaude;
+  let claudeTerminalStatus: TaskResult['status'] | null = null;
+  let claudeShutdownRequested = false;
   const seenClaudeToolUses = new Set<string>();
 
   const appendStdoutText = (text: string, options: { newline?: boolean } = {}): void => {
@@ -480,6 +597,62 @@ function startRunnerTask(options: {
     lastChangeAt = Date.now();
   };
 
+  const canWriteStdin = (): boolean =>
+    Boolean(child && child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded && !claudeShutdownRequested);
+
+  const writeStdinLine = (line: string): boolean => {
+    if (!canWriteStdin()) return false;
+    try {
+      child.stdin.write(`${line}\n`);
+      lastChangeAt = Date.now();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const requestClaudeShutdown = (status: TaskResult['status']): void => {
+    if (!interactiveClaude || claudeShutdownRequested) return;
+    claudeShutdownRequested = true;
+    claudeTerminalStatus = status;
+    try {
+      child.kill('SIGTERM');
+    } catch {}
+    const forceKill = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+    }, 5000);
+    forceKill.unref?.();
+  };
+
+  const sendClaudeUserMessage = (messageText: string, options: { countsTowardResult?: boolean } = {}): boolean => {
+    if (!interactiveClaude) return false;
+    const countsTowardResult = options.countsTowardResult !== false;
+    if (countsTowardResult) {
+      claudeExpectedResults += 1;
+    }
+    const ok = writeStdinLine(claudeUserInputLine(messageText));
+    if (!ok && countsTowardResult) {
+      claudeExpectedResults = Math.max(0, claudeExpectedResults - 1);
+    }
+    if (ok) {
+      claudeTurnInProgress = true;
+    }
+    return ok;
+  };
+
+  const interruptClaudeTurn = (): boolean => {
+    if (!interactiveClaude || !claudeTurnInProgress) return false;
+    return writeStdinLine(claudeInterruptLine());
+  };
+
+  if (interactiveClaude) {
+    sendClaudeUserMessage(options.promptText, { countsTowardResult: false });
+  } else {
+    child.stdin.end(options.promptText);
+  }
+
   const flushClaudeJsonLine = (line: string): void => {
     let event: Record<string, unknown>;
     try {
@@ -489,8 +662,22 @@ function startRunnerTask(options: {
       return;
     }
 
-    if (event.type === 'result' && typeof event.result === 'string') {
-      parsedFinalOutput = String(event.result);
+    if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') {
+      claudeSessionId = sanitizeText(event.session_id);
+      return;
+    }
+
+    if (event.type === 'result') {
+      if (typeof event.result === 'string') {
+        parsedFinalOutput = String(event.result);
+      }
+      if (interactiveClaude) {
+        claudeTurnInProgress = false;
+        claudeSeenResults += 1;
+        if (claudeSeenResults >= claudeExpectedResults) {
+          requestClaudeShutdown(claudeResultStatus(event));
+        }
+      }
       return;
     }
 
@@ -604,6 +791,7 @@ function startRunnerTask(options: {
         taskId,
         elapsedMs: Date.now() - startedAt,
         pid: child.pid || null,
+        sessionId: claudeSessionId,
         branchName: workspace.branchName ? String(workspace.branchName) : null,
         worktreePath: workspace.worktreePath ? String(workspace.worktreePath) : null,
         commandSummary,
@@ -674,6 +862,7 @@ function startRunnerTask(options: {
       const result: TaskResult = {
         id: taskId,
         runner: options.runner,
+        sessionId: claudeSessionId,
         status,
         summary: buildSummary(
           status,
@@ -712,6 +901,10 @@ function startRunnerTask(options: {
     });
 
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      if (claudeTerminalStatus) {
+        resolve(finish(claudeTerminalStatus));
+        return;
+      }
       if (cancelled) {
         resolve(finish('cancelled'));
         return;
@@ -736,6 +929,7 @@ function startRunnerTask(options: {
     meta: {
       id: taskId,
       runner: options.runner,
+      sessionId: claudeSessionId,
       promptPreview: previewText(options.promptPreview, 160),
       startedAt: startedAtIso,
       pid: child.pid || null,
@@ -763,11 +957,30 @@ function startRunnerTask(options: {
         child.kill('SIGTERM');
       } catch {}
     },
+    steer: interactiveClaude
+      ? (messageText: string) => {
+          const steerText = String(messageText || '').trim();
+          if (!steerText) return false;
+          claudeExpectedResults += 1;
+          let ok = true;
+          if (claudeTurnInProgress) {
+            ok = interruptClaudeTurn() && ok;
+          }
+          ok = writeStdinLine(claudeUserInputLine(steerText)) && ok;
+          if (!ok) {
+            claudeExpectedResults = Math.max(0, claudeExpectedResults - 1);
+            return false;
+          }
+          claudeTurnInProgress = true;
+          return true;
+        }
+      : undefined,
     getPid: () => child.pid || null,
     promise,
   };
 }
 
 module.exports = {
+  appendTaskSteer,
   startRunnerTask,
 };

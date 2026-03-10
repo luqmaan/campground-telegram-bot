@@ -98,7 +98,10 @@ function helpMessage(): string {
     'Successful code changes are auto-applied to main.',
     'Runtime-affecting changes are auto-deployed after apply.',
     'Plain text defaults to Claude.',
-    'Reply to a task card to keep talking to that specific Claude or Codex agent.',
+    'Reply to a running Claude task card to inject a live steer into that session.',
+    'Reply to a running Codex task card to append steer instructions for that run.',
+    'Reply to a finished Claude task card to resume that Claude session in a follow-up run.',
+    'Reply to a finished Codex task card to start a follow-up Codex run.',
     'Uploads with no text are queued for the next Claude or Codex task.',
   ].join('\n');
 }
@@ -393,7 +396,16 @@ function escapeHtml(text: unknown): string {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function runnerCardMessage(input: Record<string, unknown>): string {
+function stripMarkup(text: unknown): string {
+  return String(text || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/(?<!\w)\*(.+?)\*(?!\w)/g, '$1')
+    .replace(/(?<!\w)_(.+?)_(?!\w)/g, '$1');
+}
+
+function runnerCardMessage(input: Record<string, unknown>): { card: string; overflow: string | null } {
   const status = String(input.status || 'running');
   const runner = String(input.runner || 'runner');
   const promptPreview = previewText(input.promptPreview, 140) || 'no prompt preview';
@@ -440,10 +452,13 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   const outputPreview = previewLastLines(stdoutTail || stdoutChunk, 8, 700) || previewLastLines(stdoutChunk, 8, 700);
   const stderrPreview = previewLastLines(stderrTail || stderrChunk, 6, 600) || previewLastLines(stderrChunk, 6, 600);
 
+  let fullResultOverflow: string | null = null;
+
   if (status !== 'running' && input.finalOutput) {
-    const finalOutputPreview = previewLastLines(input.finalOutput, 10, 900) || previewText(input.finalOutput, 900);
-    if (finalOutputPreview) {
-      sections.push([`💬 <b>Result:</b>`, finalOutputPreview]);
+    const cleanOutput = escapeHtml(stripMarkup(input.finalOutput));
+    if (cleanOutput) {
+      sections.push([`💬 <b>Result:</b>`, cleanOutput]);
+      fullResultOverflow = cleanOutput;
     }
   } else {
     if (outputPreview) {
@@ -454,8 +469,8 @@ function runnerCardMessage(input: Record<string, unknown>): string {
   }
 
   const meta: string[] = [];
-  if (status !== 'running' && input.summary) {
-    meta.push(`📝 <b>Summary:</b> ${escapeHtml(previewText(input.summary, 260))}`);
+  if (status !== 'running' && input.summary && !input.finalOutput) {
+    meta.push(`📝 <b>Summary:</b> ${escapeHtml(stripMarkup(input.summary))}`);
   }
   if (status !== 'running' && input.commitSha) {
     meta.push(`Commit: <code>${escapeHtml(String(input.commitSha))}</code>`);
@@ -471,7 +486,19 @@ function runnerCardMessage(input: Record<string, unknown>): string {
     sections.push(meta);
   }
 
-  return sections.map((s) => s.join('\n')).join('\n\n');
+  const card = sections.map((s) => s.join('\n')).join('\n\n');
+
+  if (card.length <= 3600) {
+    return { card, overflow: null };
+  }
+
+  if (fullResultOverflow) {
+    const withoutResult = sections.filter((s) => !s[0]?.startsWith('💬'));
+    const trimmedCard = withoutResult.map((s) => s.join('\n')).join('\n\n') + '\n\n💬 <b>Result:</b> (sent below)';
+    return { card: trimmedCard, overflow: stripMarkup(input.finalOutput) };
+  }
+
+  return { card: card.slice(0, 3600), overflow: null };
 }
 
 function manualRunStartedMessage(scope: Record<string, unknown>): string {

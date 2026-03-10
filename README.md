@@ -12,6 +12,7 @@ Standalone Telegram bot for monitoring Reserve California campsite availability 
 - Stores per-chat session state, pending uploads, and last runner results on disk
 - Saves photos and documents locally and attaches them to the next runner task
 - Runs Claude and Codex inside isolated git worktrees with auto-commit on successful code changes
+- Lets you reply to task cards to steer running work and resume finished Claude sessions
 - Constrains the bot and its subprocesses with a dedicated cgroup slice, `nice`/`ionice`, optional `timeout`, and `prlimit`
 - Built-in commands:
   - `/status`
@@ -66,6 +67,9 @@ The bot wrapper joins a dedicated systemd slice and caps Node heap. Agent subpro
 - The first authorized user is seeded from `TELEGRAM_OWNER_USER_ID`
 - The next new human sender in the configured group is auto-added until `TELEGRAM_MAX_AUTH_USERS` is reached
 - Plain uploads with no text are queued for the next `/claude` or `/codex` task
+- Replies to a running Claude task card are injected into that live Claude session
+- Replies to a running Codex task card are appended to that task's live steer inbox
+- Replies to a finished Claude task card resume the saved Claude session in a new run
 - Successful Claude/Codex edits are committed onto task branches like `tg/2026-03-06-fix-parser-a1b2c3`
 - Failed tasks keep their isolated worktree only if there are uncommitted changes worth inspecting
 - The monitor currently checks the Apr 3-6, 2026 weekend configuration baked into `src/monitor-config.ts`

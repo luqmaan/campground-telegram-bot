@@ -1,5 +1,7 @@
 .env
 .campground-runner-status.json
+.campground-runner-steer.txt
+.campground-runner-steer-uploads/
 data/*.json
 !data/.gitkeep
 data/sessions/

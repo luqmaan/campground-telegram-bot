@@ -36,6 +36,7 @@ type UploadRecord = {
 type ActiveTask = {
   id: string;
   runner: RunnerName;
+  sessionId?: string | null;
   promptPreview: string | null;
   startedAt: string;
   pid: number | null;
@@ -63,6 +64,7 @@ type ActiveTask = {
 type TaskResult = {
   id: string;
   runner: RunnerName;
+  sessionId?: string | null;
   status: 'completed' | 'failed' | 'cancelled' | 'timeout';
   summary: string;
   finalOutput: string | null;
@@ -290,6 +292,7 @@ class SessionStore {
         if (progress.branchName) next.branchName = String(progress.branchName);
         if (progress.worktreePath !== undefined) next.worktreePath = progress.worktreePath ? String(progress.worktreePath) : null;
         if (progress.commandSummary) next.commandSummary = String(progress.commandSummary);
+        if (progress.sessionId !== undefined) next.sessionId = progress.sessionId ? String(progress.sessionId) : null;
         next.statusStage = progress.statusStage ? String(progress.statusStage) : null;
         next.statusSummary = progress.statusSummary ? String(progress.statusSummary) : null;
         next.statusHypothesis = progress.statusHypothesis ? String(progress.statusHypothesis) : null;
@@ -391,6 +394,7 @@ class SessionStore {
         const result: TaskResult = {
           id: String(activeTask.id || `interrupted-${Date.now()}`),
           runner: activeTask.runner,
+          sessionId: activeTask.sessionId || null,
           status: 'failed',
           summary: 'Interrupted because bilal69-bot restarted before the task finished.',
           finalOutput: null,
