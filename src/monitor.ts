@@ -436,7 +436,7 @@ class CampgroundMonitor {
     const tierText = tier === 1 ? 'Tier 1 — High demand' : tier === 2 ? 'Tier 2 — Great pick' : 'Tier 3 — Good option';
     const parkInfo = (PARK_INFO as Record<string, { parkId: number; description: string }>)[String(target.parkName)];
     const bookingUrl = parkInfo
-      ? `https://www.reservecalifornia.com/CaliforniaWebHome/Facilities/SearchViewUnitAvailability.aspx#!park/${parkInfo.parkId}/${target.facilityId}`
+      ? `https://www.reservecalifornia.com/#!park/${parkInfo.parkId}/${target.facilityId}`
       : 'https://www.reservecalifornia.com';
     const description = parkInfo?.description ?? '';
     const siteList = (result.sites as Array<Record<string, unknown>>).map((site) => `  ${site.name} ($${site.rate}/night)`).join('\n');

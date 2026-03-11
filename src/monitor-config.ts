@@ -50,7 +50,7 @@ const DATE_RANGES = [
 ];
 
 // Static park metadata: parkId is the ReserveCalifornia parent park ID used for booking URLs.
-// Booking link format: https://www.reservecalifornia.com/CaliforniaWebHome/Facilities/SearchViewUnitAvailability.aspx#!park/{parkId}/{facilityId}
+// Booking link format: https://www.reservecalifornia.com/#!park/{parkId}/{facilityId}
 const PARK_INFO: Record<string, { parkId: number; description: string }> = {
   'Doheny SB': {
     parkId: 461,
