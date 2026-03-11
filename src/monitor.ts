@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 
 const config = require('./config.ts');
-const { DATE_RANGES, TARGETS } = require('./monitor-config.ts');
+const { DATE_RANGES, PARK_INFO, TARGETS } = require('./monitor-config.ts');
 const { formatDuration, nowIso, previewText, readJson, writeJson } = require('./utils.ts');
 
 const RDR_BASE = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
@@ -431,12 +431,21 @@ class CampgroundMonitor {
   }
 
   formatAlert(target: Record<string, unknown>, range: Record<string, unknown>, result: Record<string, unknown>): string {
-    const tierLabel = target.tier === 1 ? '🔥' : target.tier === 2 ? '⭐' : '📍';
-    const siteList = result.sites.map((site: Record<string, unknown>) => `  ${site.name} ($${site.rate}/night)`).join('\n');
+    const tier = Number(target.tier);
+    const tierEmoji = tier === 1 ? '🔥' : tier === 2 ? '⭐' : '📍';
+    const tierText = tier === 1 ? 'Tier 1 — High demand' : tier === 2 ? 'Tier 2 — Great pick' : 'Tier 3 — Good option';
+    const parkInfo = (PARK_INFO as Record<string, { parkId: number; description: string }>)[String(target.parkName)];
+    const bookingUrl = parkInfo
+      ? `https://www.reservecalifornia.com/CaliforniaWebHome/Facilities/SearchViewUnitAvailability.aspx#!park/${parkInfo.parkId}/${target.facilityId}`
+      : 'https://www.reservecalifornia.com';
+    const description = parkInfo?.description ?? '';
+    const siteList = (result.sites as Array<Record<string, unknown>>).map((site) => `  ${site.name} ($${site.rate}/night)`).join('\n');
     return (
-      `${tierLabel} <b>${target.parkName}</b> — ${target.facilityName}\n` +
+      `${tierEmoji} <b>${target.parkName}</b> — ${target.facilityName} | ${tierText}\n` +
+      (description ? `<i>${description}</i>\n` : '') +
       `${range.label}: <b>${result.available} sites available</b> (of ${result.total})\n` +
-      siteList
+      siteList + '\n' +
+      `🔗 <a href="${bookingUrl}">Book on ReserveCalifornia</a>`
     );
   }
 
@@ -555,7 +564,7 @@ class CampgroundMonitor {
           }
           message += `${alert}\n\n`;
         }
-        await this.sendTelegram(config.GROUP_CHAT_ID, `${message}🔗 https://www.reservecalifornia.com`, { html: true });
+        await this.sendTelegram(config.GROUP_CHAT_ID, message.trimEnd(), { html: true });
       }
 
       state.lastCheck = Date.now();
