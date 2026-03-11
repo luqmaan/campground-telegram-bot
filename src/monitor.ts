@@ -6,6 +6,37 @@ const { formatDuration, nowIso, previewText, readJson, writeJson } = require('./
 
 const RDR_BASE = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
 
+// Date helpers for 6-month release window
+function parseApiDate(mmddyyyy: string): Date {
+  const [mm, dd, yyyy] = mmddyyyy.split('-');
+  return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+}
+
+function toSliceKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}T00:00:00`;
+}
+
+function formatApiDate(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${m}-${day}-${d.getFullYear()}`;
+}
+
+function computeReleaseDate(from: Date): Date {
+  const y = from.getFullYear();
+  const mo = from.getMonth();
+  const d = from.getDate();
+  const targetMonth = mo + 6;
+  const targetYear = y + Math.floor(targetMonth / 12);
+  const normalizedMonth = targetMonth % 12;
+  const lastDayOfTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+  const targetDay = Math.min(d, lastDayOfTargetMonth);
+  return new Date(targetYear, normalizedMonth, targetDay);
+}
+
 type SendTelegramFn = (chatId: string | number, text: string, options?: { threadId?: number | null; html?: boolean }) => Promise<void>;
 type FacilityCheckResult = {
   available: number;
@@ -277,8 +308,21 @@ class CampgroundMonitor {
         this.lastCheckError = 'Reserve California response did not include Facility.Units';
         return null;
       }
-      const entries = Object.values(units);
-      const availableUnits = entries.filter((unit: Record<string, unknown>) => unit.IsAvailable);
+      const entries = Object.values(units) as Record<string, unknown>[];
+
+      // Build slice keys for all requested consecutive nights (API uses YYYY-MM-DDT00:00:00 keys)
+      const startMs = parseApiDate(startDate).getTime();
+      const sliceKeys: string[] = [];
+      for (let n = 0; n < nights; n++) {
+        sliceKeys.push(toSliceKey(new Date(startMs + n * 86400000)));
+      }
+
+      const availableUnits = entries.filter((unit: Record<string, unknown>) => {
+        if (!unit.AllowWebBooking) return false;
+        const slices = (unit.Slices as Record<string, Record<string, unknown>>) || {};
+        return sliceKeys.every((k) => slices[k]?.IsFree === true);
+      });
+
       return {
         available: availableUnits.length,
         total: entries.length,
@@ -291,6 +335,99 @@ class CampgroundMonitor {
       this.lastCheckError = error instanceof Error ? error.message : String(error);
       return null;
     }
+  }
+
+  async checkFacilityForDate(facilityId: number, targetDateApiFormat: string): Promise<FacilityCheckResult | null> {
+    this.lastCheckError = null;
+    try {
+      const data = await this.fetchReserveCaliforniaJson(
+        `${RDR_BASE}/search/grid`,
+        JSON.stringify({
+          FacilityId: facilityId,
+          StartDate: targetDateApiFormat,
+          Nights: '1',
+          IsADA: false,
+          UnitCategoryId: 0,
+          MinVehicleLength: 0,
+          UnitTypesGroupIds: [],
+        }),
+        reserveCaliforniaHeaders(),
+      );
+      if (!data) return null;
+      const units = data?.Facility?.Units;
+      if (!units) {
+        this.lastCheckError = 'Reserve California response did not include Facility.Units';
+        return null;
+      }
+      const entries = Object.values(units) as Record<string, unknown>[];
+      const sliceKey = toSliceKey(parseApiDate(targetDateApiFormat));
+      const availableUnits = entries.filter((unit: Record<string, unknown>) => {
+        if (!unit.AllowWebBooking) return false;
+        const slices = (unit.Slices as Record<string, Record<string, unknown>>) || {};
+        return slices[sliceKey]?.IsFree === true;
+      });
+      return {
+        available: availableUnits.length,
+        total: entries.length,
+        sites: availableUnits.slice(0, 10).map((unit: Record<string, unknown>) => ({
+          name: unit.ShortName || unit.Name || '?',
+          rate: unit.MinRate || 0,
+        })),
+      };
+    } catch (error) {
+      this.lastCheckError = error instanceof Error ? error.message : String(error);
+      return null;
+    }
+  }
+
+  getReleaseDate(from?: Date): Date {
+    return computeReleaseDate(from || new Date());
+  }
+
+  async runReleaseCheck(): Promise<{
+    releaseDate: string;
+    releaseDateIso: string;
+    releaseDateLabel: string;
+    foundCount: number;
+    results: Array<{ target: Record<string, unknown>; available: number; total: number; sites: Array<{ name: unknown; rate: unknown }> }>;
+    errors: string[];
+    checkedAt: string;
+  }> {
+    const releaseDate = computeReleaseDate(new Date());
+    const releaseDateApiFormat = formatApiDate(releaseDate);
+    const releaseDateIso = toSliceKey(releaseDate).split('T')[0];
+    const releaseDateLabel = releaseDate.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    const results: Array<{ target: Record<string, unknown>; available: number; total: number; sites: Array<{ name: unknown; rate: unknown }> }> = [];
+    const errors: string[] = [];
+
+    const CONCURRENCY = 10;
+    for (let i = 0; i < TARGETS.length; i += CONCURRENCY) {
+      const batch = TARGETS.slice(i, i + CONCURRENCY) as Record<string, unknown>[];
+      const batchResults = await Promise.all(
+        batch.map(async (target: Record<string, unknown>) => {
+          const result = await this.checkFacilityForDate(Number(target.facilityId), releaseDateApiFormat);
+          const error = this.lastCheckError;
+          return { target, result, error };
+        }),
+      );
+      for (const { target, result, error } of batchResults) {
+        if (!result) {
+          if (errors.length < 5) errors.push(`${target.parkName} ${target.facilityName}: ${error || 'No response'}`);
+          continue;
+        }
+        if (result.available > 0) {
+          results.push({ target, available: result.available, total: result.total, sites: result.sites });
+        }
+      }
+    }
+
+    return { releaseDate: releaseDateApiFormat, releaseDateIso, releaseDateLabel, foundCount: results.length, results, errors, checkedAt: nowIso() };
   }
 
   formatAlert(target: Record<string, unknown>, range: Record<string, unknown>, result: Record<string, unknown>): string {

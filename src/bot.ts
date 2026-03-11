@@ -1102,6 +1102,136 @@ function scheduleDailySummary(): void {
   }, delay);
 }
 
+// 8am release check state (tracks what we've already alerted on for the current day)
+const releaseCheckFoundToday = new Set<string>();
+let releaseCheckDay = '';
+
+async function runReleaseCheckAttempt(attemptNumber: number, totalAttempts: number): Promise<void> {
+  const today = monitor.localDateString();
+  if (releaseCheckDay !== today) {
+    releaseCheckFoundToday.clear();
+    releaseCheckDay = today;
+  }
+
+  log('INFO', `8am release check attempt ${attemptNumber}/${totalAttempts}`);
+  let result: Awaited<ReturnType<typeof monitor.runReleaseCheck>> | null = null;
+  try {
+    result = await monitor.runReleaseCheck();
+  } catch (error) {
+    log('WARN', '8am release check failed', error instanceof Error ? error.message : String(error));
+    const errMsg = `⚠️ 8am release check attempt ${attemptNumber} failed: ${error instanceof Error ? error.message : String(error)}`;
+    await sendTelegram(config.GROUP_CHAT_ID, errMsg).catch(() => {});
+    return;
+  }
+
+  // Find newly discovered openings
+  const newFindings: string[] = [];
+  for (const r of result.results) {
+    const key = `${r.target.facilityId}:${result.releaseDateIso}`;
+    if (!releaseCheckFoundToday.has(key)) {
+      releaseCheckFoundToday.add(key);
+      const tierLabel = r.target.tier === 1 ? '🔥' : r.target.tier === 2 ? '⭐' : '📍';
+      const siteList = r.sites.length > 0
+        ? r.sites.map((s) => `  Site ${s.name}${s.rate ? ` — $${s.rate}/night` : ''}`).join('\n')
+        : '';
+      newFindings.push(
+        `${tierLabel} <b>${r.target.parkName}</b> — ${r.target.facilityName}\n` +
+        `<b>${r.available} site(s)</b> available on ${result.releaseDateLabel}\n` +
+        siteList,
+      );
+    }
+  }
+
+  const isFirst = attemptNumber === 1;
+  const isFinal = attemptNumber >= totalAttempts;
+
+  // Build message
+  let msg = '';
+  if (isFirst) {
+    msg += `🌅 <b>8am Release Check — ${result.releaseDateLabel}</b>\n`;
+    msg += `Attempt ${attemptNumber}/${totalAttempts}  |  ${result.results.length > 0 || newFindings.length > 0 ? '🔔' : '✅'} `;
+    if (newFindings.length > 0) {
+      msg += `<b>${newFindings.length} facility/facilities with openings!</b>`;
+    } else {
+      msg += `No sites available yet.${isFinal ? '' : ' Retrying...'}`;
+    }
+  } else if (newFindings.length > 0) {
+    msg += `🔔 <b>8am Release — New sites on attempt ${attemptNumber}!</b>\n`;
+    msg += `(${result.releaseDateLabel})`;
+  } else if (isFinal) {
+    const totalFound = releaseCheckFoundToday.size;
+    msg += `📊 <b>8am Release Check Done — ${result.releaseDateLabel}</b>\n`;
+    msg += `${attemptNumber} attempts completed.\n`;
+    msg += totalFound > 0
+      ? `🔔 Found openings at ${totalFound} facility/facilities today.`
+      : `✅ No new sites released for this date.`;
+  }
+
+  if (newFindings.length > 0) {
+    msg += '\n\n' + newFindings.join('\n\n');
+    msg += `\n\n🔗 https://www.reservecalifornia.com`;
+  }
+  if (result.errors.length > 0 && (isFirst || isFinal)) {
+    msg += `\n\n⚠️ ${result.errors.length} check error(s): ${result.errors[0]}`;
+  }
+
+  if (msg.trim()) {
+    await sendTelegram(config.GROUP_CHAT_ID, msg, { html: true }).catch((err: Error) => {
+      log('WARN', 'Failed to send release check message', err.message);
+    });
+  }
+
+  // If final attempt AND something was found, auto-trigger Claude to analyze & update monitor-config
+  if (isFinal && releaseCheckFoundToday.size > 0) {
+    const summaryLines = [`8am release check completed. ${releaseCheckFoundToday.size} facilities have openings for ${result.releaseDateLabel}.`];
+    for (const r of result.results) {
+      summaryLines.push(`- ${r.target.parkName} / ${r.target.facilityName}: ${r.available} site(s)`);
+    }
+    const autoPrompt = summaryLines.join('\n') + '\n\nReview these findings. If the release date is worth monitoring (weekends, holidays, or popular dates), add it to DATE_RANGES in monitor-config.ts. Output a brief summary of what you found and what you did.';
+    try {
+      await startRunnerForMessage({
+        chatId: config.GROUP_CHAT_ID,
+        threadId: null,
+        runner: 'claude',
+        prompt: autoPrompt,
+        resumeSessionId: null,
+        message: { message_id: 0, chat: { id: config.GROUP_CHAT_ID } } as TelegramMessage,
+        immediateUploads: [],
+        replyContext: null,
+      });
+    } catch (err) {
+      log('WARN', 'Failed to auto-trigger Claude after release check', err instanceof Error ? err.message : String(err));
+    }
+  }
+}
+
+// Retry schedule (ms after each attempt): 8:00, 8:05, 8:10, 8:20, 8:30
+const RELEASE_CHECK_RETRY_DELAYS_MS = [5 * 60_000, 5 * 60_000, 10 * 60_000, 10 * 60_000];
+
+function scheduleReleaseCheckRetries(attemptNumber: number, totalAttempts: number): void {
+  if (attemptNumber >= totalAttempts) return;
+  const delay = RELEASE_CHECK_RETRY_DELAYS_MS[attemptNumber - 1] ?? 10 * 60_000;
+  setTimeout(() => {
+    runReleaseCheckAttempt(attemptNumber + 1, totalAttempts)
+      .then(() => scheduleReleaseCheckRetries(attemptNumber + 1, totalAttempts))
+      .catch((err: Error) => log('WARN', 'Release check retry error', err.message));
+  }, delay);
+}
+
+function schedule8amReleaseCheck(): void {
+  const delay = msUntilDailySummary(8);
+  const h = Math.floor(delay / 3600000);
+  const m = Math.floor((delay % 3600000) / 60000);
+  log('INFO', `8am release check scheduled in ${h}h ${m}m`);
+  setTimeout(() => {
+    const totalAttempts = 5; // 8:00, 8:05, 8:10, 8:20, 8:30
+    runReleaseCheckAttempt(1, totalAttempts)
+      .then(() => scheduleReleaseCheckRetries(1, totalAttempts))
+      .catch((err: Error) => log('WARN', '8am release check error', err.message));
+    schedule8amReleaseCheck(); // Schedule next day
+  }, delay);
+}
+
 async function main(): Promise<void> {
   ensureDir(config.DATA_DIR);
   ensureDir(config.LOG_DIR);
@@ -1121,6 +1251,7 @@ async function main(): Promise<void> {
   }
   await monitor.startScheduler();
   scheduleDailySummary();
+  schedule8amReleaseCheck();
   await pollLoop();
 }
 
