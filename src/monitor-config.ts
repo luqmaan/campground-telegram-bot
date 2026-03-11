@@ -49,7 +49,69 @@ const DATE_RANGES = [
   { label: 'Sat-Mon (2 nights)', startDate: '04-04-2026', nights: 2 },
 ];
 
+// Static park metadata: parkId is the ReserveCalifornia parent park ID used for booking URLs.
+// Booking link format: https://www.reservecalifornia.com/CaliforniaWebHome/Facilities/SearchViewUnitAvailability.aspx#!park/{parkId}/{facilityId}
+const PARK_INFO: Record<string, { parkId: number; description: string }> = {
+  'Doheny SB': {
+    parkId: 461,
+    description: 'Protected cove in Dana Point with direct beach access. Great for families and surfers.',
+  },
+  'San Clemente SB': {
+    parkId: 660,
+    description: 'Blufftop camping above a classic surf break. Train access, walkable to downtown San Clemente.',
+  },
+  'San Onofre SB': {
+    parkId: 672,
+    description: 'Classic SoCal blufftop and San Mateo canyon camping. Long sandy beach, easy surf access, very chill vibe.',
+  },
+  'Carpinteria SB': {
+    parkId: 356,
+    description: 'Calm family-friendly beach near Santa Barbara. Warm gentle surf, called "world\'s safest beach."',
+  },
+  'Crystal Cove SP': {
+    parkId: 445,
+    description: 'Canyon and coastal camping in Newport Beach / Laguna. Steps from pristine tide pools and Crystal Cove beaches.',
+  },
+  'San Elijo SB': {
+    parkId: 663,
+    description: 'Oceanfront blufftop camping in Cardiff-by-the-Sea. Walkable to restaurants, reliable surf, year-round favorite.',
+  },
+  'South Carlsbad SB': {
+    parkId: 706,
+    description: 'Blufftop camping with sweeping Pacific views in Carlsbad. Easy beach access and great sunsets.',
+  },
+  'Refugio SB': {
+    parkId: 631,
+    description: 'Sheltered palm-lined cove west of Santa Barbara. Excellent snorkeling, kayaking, and calm swimming.',
+  },
+  'El Capitan SB': {
+    parkId: 374,
+    description: 'Shaded canyon camping above the coast near Santa Barbara. Natural tidepools and kelp forest access.',
+  },
+  'Malibu Creek SP': {
+    parkId: 561,
+    description: 'Inland canyon camping in the Santa Monica Mountains. MASH filming location; creek swimming and great hiking.',
+  },
+  'Gaviota SP': {
+    parkId: 489,
+    description: 'Uncrowded beach camping west of Santa Barbara near hot springs. Remote and peaceful.',
+  },
+  'Leo Carrillo SP': {
+    parkId: 537,
+    description: 'Wild beach camping north of Malibu with sea caves and tide pools. Campfires allowed on the beach.',
+  },
+  'Point Mugu SP': {
+    parkId: 617,
+    description: 'Remote beachfront and canyon camping on the PCH north of Malibu. Very secluded, minimal crowds.',
+  },
+  'Bolsa Chica SB': {
+    parkId: 415,
+    description: 'RV-friendly beach camping in Huntington Beach next to the Bolsa Chica Ecological Reserve.',
+  },
+};
+
 module.exports = {
   DATE_RANGES,
+  PARK_INFO,
   TARGETS,
 };

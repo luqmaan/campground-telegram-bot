@@ -1,4 +1,5 @@
 const config = require('./config.ts');
+const { PARK_INFO } = require('./monitor-config.ts');
 const { CampgroundMonitor } = require('./monitor.ts');
 const { SessionStore, displayName, profileFromTelegramUser } = require('./session-store.ts');
 const {
@@ -1135,14 +1136,23 @@ async function runReleaseCheckAttempt(attemptNumber: number, totalAttempts: numb
     const key = `${r.target.facilityId}:${result.releaseDateIso}`;
     if (!releaseCheckFoundToday.has(key)) {
       releaseCheckFoundToday.add(key);
-      const tierLabel = r.target.tier === 1 ? '🔥' : r.target.tier === 2 ? '⭐' : '📍';
+      const tier = Number(r.target.tier);
+      const tierEmoji = tier === 1 ? '🔥' : tier === 2 ? '⭐' : '📍';
+      const tierText = tier === 1 ? 'Tier 1 — High demand' : tier === 2 ? 'Tier 2 — Great pick' : 'Tier 3 — Good option';
+      const parkInfo = (PARK_INFO as Record<string, { parkId: number; description: string }>)[String(r.target.parkName)];
+      const bookingUrl = parkInfo
+        ? `https://www.reservecalifornia.com/CaliforniaWebHome/Facilities/SearchViewUnitAvailability.aspx#!park/${parkInfo.parkId}/${r.target.facilityId}`
+        : 'https://www.reservecalifornia.com';
+      const description = parkInfo?.description ?? '';
       const siteList = r.sites.length > 0
-        ? r.sites.map((s) => `  Site ${s.name}${s.rate ? ` — $${s.rate}/night` : ''}`).join('\n')
+        ? r.sites.map((s: { name: unknown; rate: unknown }) => `  Site ${s.name}${s.rate ? ` — $${s.rate}/night` : ''}`).join('\n')
         : '';
       newFindings.push(
-        `${tierLabel} <b>${r.target.parkName}</b> — ${r.target.facilityName}\n` +
+        `${tierEmoji} <b>${r.target.parkName}</b> — ${r.target.facilityName} | ${tierText}\n` +
+        (description ? `<i>${description}</i>\n` : '') +
         `<b>${r.available} site(s)</b> available on ${result.releaseDateLabel}\n` +
-        siteList,
+        siteList + '\n' +
+        `🔗 <a href="${bookingUrl}">Book on ReserveCalifornia</a>`,
       );
     }
   }
@@ -1174,7 +1184,6 @@ async function runReleaseCheckAttempt(attemptNumber: number, totalAttempts: numb
 
   if (newFindings.length > 0) {
     msg += '\n\n' + newFindings.join('\n\n');
-    msg += `\n\n🔗 https://www.reservecalifornia.com`;
   }
   if (result.errors.length > 0 && (isFirst || isFinal)) {
     msg += `\n\n⚠️ ${result.errors.length} check error(s): ${result.errors[0]}`;
