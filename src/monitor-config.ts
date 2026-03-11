@@ -44,10 +44,35 @@ const TARGETS = [
   { facilityId: 418, parkName: 'Bolsa Chica SB', facilityName: 'Campground 32-57 (RV)', tier: 3 },
 ];
 
-const DATE_RANGES = [
-  { label: 'Fri-Mon (3 nights)', startDate: '04-03-2026', nights: 3 },
-  { label: 'Sat-Mon (2 nights)', startDate: '04-04-2026', nights: 2 },
-];
+// Dynamically generate all upcoming Fri–Sun (2-night) weekends from now through ~6 months out.
+// Called on each monitor run so the list stays current.
+function getDateRanges(): Array<{ label: string; startDate: string; nights: number }> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const dayOfWeek = today.getDay(); // 0=Sun … 5=Fri … 6=Sat
+  const daysToFriday = (5 - dayOfWeek + 7) % 7; // 0 if today is Friday
+  const firstFriday = new Date(today.getTime() + daysToFriday * 86400000);
+
+  const sixMonthsOut = new Date(today);
+  sixMonthsOut.setMonth(sixMonthsOut.getMonth() + 6);
+
+  const ranges: Array<{ label: string; startDate: string; nights: number }> = [];
+  let current = new Date(firstFriday);
+  while (current <= sixMonthsOut) {
+    const mm = String(current.getMonth() + 1).padStart(2, '0');
+    const dd = String(current.getDate()).padStart(2, '0');
+    const yyyy = current.getFullYear();
+    const startDate = `${mm}-${dd}-${yyyy}`;
+    const sunday = new Date(current.getTime() + 2 * 86400000);
+    const label =
+      `Fri, ${current.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` +
+      ` – Sun, ${sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    ranges.push({ label, startDate, nights: 2 });
+    current = new Date(current.getTime() + 7 * 86400000);
+  }
+  return ranges;
+}
 
 // Static park metadata: parkId is the ReserveCalifornia parent park ID used for booking URLs.
 // Booking link format: https://www.reservecalifornia.com/#!park/{parkId}/{facilityId}
@@ -111,7 +136,7 @@ const PARK_INFO: Record<string, { parkId: number; description: string }> = {
 };
 
 module.exports = {
-  DATE_RANGES,
+  getDateRanges,
   PARK_INFO,
   TARGETS,
 };

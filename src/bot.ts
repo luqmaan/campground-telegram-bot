@@ -1201,7 +1201,7 @@ async function runReleaseCheckAttempt(attemptNumber: number, totalAttempts: numb
     for (const r of result.results) {
       summaryLines.push(`- ${r.target.parkName} / ${r.target.facilityName}: ${r.available} site(s)`);
     }
-    const autoPrompt = summaryLines.join('\n') + '\n\nReview these findings. If the release date is worth monitoring (weekends, holidays, or popular dates), add it to DATE_RANGES in monitor-config.ts. Output a brief summary of what you found and what you did.';
+    const autoPrompt = summaryLines.join('\n') + '\n\nReview these findings and output a brief summary of what you found. Note: the bot now automatically monitors all upcoming Fri–Sun weekends via getDateRanges() in monitor-config.ts — no manual date updates needed.';
     try {
       await startRunnerForMessage({
         chatId: config.GROUP_CHAT_ID,
