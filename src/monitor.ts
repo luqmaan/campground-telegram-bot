@@ -25,6 +25,14 @@ function formatApiDate(d: Date): string {
   return `${m}-${day}-${d.getFullYear()}`;
 }
 
+function formatDateRange(startDate: string, nights: number): string {
+  const start = parseApiDate(startDate);
+  const end = new Date(start.getTime() + nights * 86400000);
+  const startStr = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const endStr = end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${startStr} – ${endStr}`;
+}
+
 function computeReleaseDate(from: Date): Date {
   const y = from.getFullYear();
   const mo = from.getMonth();
@@ -443,7 +451,7 @@ class CampgroundMonitor {
     return (
       `${tierEmoji} <b>${target.parkName}</b> — ${target.facilityName} | ${tierText}\n` +
       (description ? `<i>${description}</i>\n` : '') +
-      `${range.label}: <b>${result.available} sites available</b> (of ${result.total})\n` +
+      `${formatDateRange(String(range.startDate), Number(range.nights))} (${range.nights} nights): <b>${result.available} sites available</b> (of ${result.total})\n` +
       siteList + '\n' +
       `🔗 <a href="${bookingUrl}">Book on ReserveCalifornia</a>`
     );
@@ -555,7 +563,10 @@ class CampgroundMonitor {
       }
 
       if (alerts.length > 0) {
-        const header = '<b>Campsite Alert — Apr 3-6 Weekend</b>\n\n';
+        const rangeLabel = DATE_RANGES.length === 1
+          ? formatDateRange(DATE_RANGES[0].startDate, DATE_RANGES[0].nights)
+          : DATE_RANGES.map((r) => formatDateRange(r.startDate, r.nights)).join(' · ');
+        const header = `<b>Campsite Alert — ${rangeLabel}</b>\n\n`;
         let message = header;
         for (const alert of alerts) {
           if (message.length + alert.length > 3800) {

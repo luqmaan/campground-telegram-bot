@@ -46,7 +46,6 @@ const TARGETS = [
 
 const DATE_RANGES = [
   { label: 'Fri-Mon (3 nights)', startDate: '04-03-2026', nights: 3 },
-  { label: 'Sat-Mon (2 nights)', startDate: '04-04-2026', nights: 2 },
 ];
 
 // Static park metadata: parkId is the ReserveCalifornia parent park ID used for booking URLs.
