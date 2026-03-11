@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 
 const config = require('./config.ts');
-const { DATE_RANGES, PARK_INFO, TARGETS } = require('./monitor-config.ts');
+const { getDateRanges, PARK_INFO, TARGETS } = require('./monitor-config.ts');
 const { formatDuration, nowIso, previewText, readJson, writeJson } = require('./utils.ts');
 
 const RDR_BASE = 'https://california-rdr.prod.cali.rd12.recreation-management.tylerapp.com/rdr';
@@ -156,14 +156,16 @@ class CampgroundMonitor {
   }
 
   scopeSummary(): Record<string, unknown> {
+    const dateRanges = getDateRanges();
     return {
       targetCount: TARGETS.length,
-      rangeCount: DATE_RANGES.length,
-      totalChecks: TARGETS.length * DATE_RANGES.length,
+      rangeCount: dateRanges.length,
+      totalChecks: TARGETS.length * dateRanges.length,
     };
   }
 
   scopeMessage(): string {
+    const dateRanges = getDateRanges();
     const scope = this.scopeSummary();
     const parks = new Map<string, string[]>();
     for (const target of TARGETS) {
@@ -173,19 +175,16 @@ class CampgroundMonitor {
       parks.get(target.parkName)?.push(target.facilityName);
     }
 
+    const first = dateRanges[0];
+    const last = dateRanges[dateRanges.length - 1];
     const lines = [
       `Current monitor scope: ${scope.totalChecks} checks per run`,
       `Targets: ${scope.targetCount} campground loops / sections`,
-      `Date ranges: ${scope.rangeCount}`,
+      `Weekends: ${scope.rangeCount} (${first?.label ?? '?'} through ${last?.label ?? '?'})`,
       '',
-      'Date ranges:',
+      'Parks:',
     ];
 
-    DATE_RANGES.forEach((range) => {
-      lines.push(`- ${range.label}: ${range.startDate}`);
-    });
-
-    lines.push('', 'Parks:');
     for (const [parkName, facilities] of parks.entries()) {
       lines.push(`- ${parkName}: ${facilities.join(', ')}`);
     }
@@ -498,15 +497,17 @@ class CampgroundMonitor {
     this.recordEvent(state, `Started ${mode} run`);
     this.saveState(state);
 
-    const alerts: string[] = [];
+    // alertsByDate groups alerts per weekend for organised per-weekend messages
+    const alertsByDate = new Map<string, { label: string; items: string[] }>();
     const newOpenings: Array<{ parkName: string; facilityName: string; rangeLabel: string; available: number }> = [];
     let facilitiesWithAvailability = 0;
     const now = Date.now();
 
     try {
+      const dateRanges = getDateRanges();
       const CONCURRENCY = 10;
       const allTasks: Array<{ target: Record<string, unknown>; range: Record<string, unknown>; key: string }> = [];
-      for (const range of DATE_RANGES) {
+      for (const range of dateRanges) {
         for (const target of TARGETS) {
           allTasks.push({ target, range, key: `${target.facilityId}:${range.startDate}` });
         }
@@ -537,7 +538,11 @@ class CampgroundMonitor {
           run.successfulChecks += 1;
           if (result.available > 0) {
             facilitiesWithAvailability += 1;
-            alerts.push(this.formatAlert(target, range, result));
+            const dateKey = String(range.startDate);
+            if (!alertsByDate.has(dateKey)) {
+              alertsByDate.set(dateKey, { label: String(range.label), items: [] });
+            }
+            alertsByDate.get(dateKey)!.items.push(this.formatAlert(target, range, result));
             newOpenings.push({ parkName: String(target.parkName), facilityName: String(target.facilityName), rangeLabel: String(range.label), available: result.available });
             state.alerted[key] = now;
             this.recordEvent(state, `Availability found at ${target.parkName} ${target.facilityName} (${range.label})`);
@@ -562,29 +567,35 @@ class CampgroundMonitor {
         this.saveState(state);
       }
 
-      if (alerts.length > 0) {
-        const rangeLabel = DATE_RANGES.length === 1
-          ? formatDateRange(DATE_RANGES[0].startDate, DATE_RANGES[0].nights)
-          : DATE_RANGES.map((r) => formatDateRange(r.startDate, r.nights)).join(' · ');
-        const header = `<b>Campsite Alert — ${rangeLabel}</b>\n\n`;
-        let message = header;
-        for (const alert of alerts) {
-          if (message.length + alert.length > 3800) {
-            await this.sendTelegram(config.GROUP_CHAT_ID, message, { html: true });
-            message = header;
+      if (alertsByDate.size > 0) {
+        // Sort weekends nearest-first (startDate is MM-DD-YYYY)
+        const parseMMDDYYYY = (s: string) => {
+          const [mm, dd, yyyy] = s.split('-');
+          return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime();
+        };
+        const sortedWeekends = [...alertsByDate.entries()].sort(([a], [b]) => parseMMDDYYYY(a) - parseMMDDYYYY(b));
+        for (const [, { label, items }] of sortedWeekends) {
+          const header = `<b>Campsite Alert — ${label}</b>\n\n`;
+          let message = header;
+          for (const alert of items) {
+            if (message.length + alert.length + 2 > 3800) {
+              await this.sendTelegram(config.GROUP_CHAT_ID, message.trimEnd(), { html: true });
+              message = header;
+            }
+            message += `${alert}\n\n`;
           }
-          message += `${alert}\n\n`;
+          await this.sendTelegram(config.GROUP_CHAT_ID, message.trimEnd(), { html: true });
         }
-        await this.sendTelegram(config.GROUP_CHAT_ID, message.trimEnd(), { html: true });
       }
 
       state.lastCheck = Date.now();
       state.lastSuccessAt = state.lastCheck;
       state.lastError = null;
       run.success = true;
-      run.alertsSent = alerts.length;
+      const totalAlerts = [...alertsByDate.values()].reduce((sum, { items }) => sum + items.length, 0);
+      run.alertsSent = totalAlerts;
       run.facilitiesWithAvailability = facilitiesWithAvailability;
-      this.recordEvent(state, `Completed ${mode} run: ${alerts.length} alerts, ${facilitiesWithAvailability} openings`);
+      this.recordEvent(state, `Completed ${mode} run: ${totalAlerts} alerts, ${facilitiesWithAvailability} openings`);
 
       const todayDate = this.localDateString();
       const existingDaily = state.dailyStats as Record<string, unknown> | null;
