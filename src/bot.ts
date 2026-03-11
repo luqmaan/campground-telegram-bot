@@ -1141,7 +1141,7 @@ async function runReleaseCheckAttempt(attemptNumber: number, totalAttempts: numb
       const tierText = tier === 1 ? 'Tier 1 — High demand' : tier === 2 ? 'Tier 2 — Great pick' : 'Tier 3 — Good option';
       const parkInfo = (PARK_INFO as Record<string, { parkId: number; description: string }>)[String(r.target.parkName)];
       const bookingUrl = parkInfo
-        ? `https://www.reservecalifornia.com/#!park/${parkInfo.parkId}/${r.target.facilityId}`
+        ? `https://www.reservecalifornia.com/#/park/${parkInfo.parkId}/${r.target.facilityId}`
         : 'https://www.reservecalifornia.com';
       const description = parkInfo?.description ?? '';
       const siteList = r.sites.length > 0
