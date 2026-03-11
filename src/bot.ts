@@ -854,8 +854,13 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
   }
 
   if (command.type === 'restart-monitor') {
-    await monitor.restartScheduler();
-    await sendTelegram(chatId, 'Monitor scheduler restarted.', { threadId });
+    try {
+      const requestedBy = displayName(profileFromTelegramUser(message.from || {}));
+      const result = scheduleDeploy(requestedBy, null);
+      await sendTelegram(chatId, `Restarting bot process... ${result.message}`, { threadId });
+    } catch (error) {
+      await sendTelegram(chatId, `Restart failed: ${error instanceof Error ? error.message : String(error)}`, { threadId });
+    }
     return;
   }
 
