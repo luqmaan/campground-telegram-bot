@@ -440,13 +440,29 @@ class CampgroundMonitor {
   formatCombinedAlert(findings: Array<{ target: Record<string, unknown>; range: Record<string, unknown> }>): string {
     const parseDate = (s: string) => { const [mm, dd, yyyy] = s.split('-'); return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime(); };
     const sorted = [...findings].sort((a, b) => parseDate(String(a.range.startDate)) - parseDate(String(b.range.startDate)));
-    const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-    const lines: string[] = [`${today} - ${findings.length} open`];
+    const today = new Date();
+    const todayStr = today.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    const lines: string[] = [`${todayStr} - ${findings.length} open`];
+    const parksWithFindings = new Set<string>();
     for (const { target, range } of sorted) {
       const dr = formatDateRange(String(range.startDate), Number(range.nights));
       const name = `${target.parkName} ${target.facilityName}`;
       lines.push(`${dr} available - ${name}`);
+      parksWithFindings.add(String(target.parkName));
     }
+    // "no dates" for parks with no availability
+    const allParkNames = [...new Set((TARGETS as Array<{ parkName: string }>).map((t) => t.parkName))];
+    for (const parkName of allParkNames) {
+      if (!parksWithFindings.has(parkName)) {
+        lines.push(`no dates - ${parkName}`);
+      }
+    }
+    // Search range footer
+    const threeMonthsOut = new Date(today);
+    threeMonthsOut.setMonth(threeMonthsOut.getMonth() + 3);
+    const rangeStart = today.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const rangeEnd = threeMonthsOut.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    lines.push(`Search range: ${rangeStart} – ${rangeEnd}`);
     return lines.join('\n');
   }
 
@@ -567,8 +583,12 @@ class CampgroundMonitor {
           }
         }
 
-        // Only send if there are new (non-recently-alerted) findings
-        const newFindings = [...facilityEarliest.values()].filter(({ key }) => !state.alerted[key] || now - state.alerted[key] >= 2 * 60 * 60 * 1000);
+        // Filter to 2 months max, then check for new (non-recently-alerted) findings
+        const twoMonthsOut = new Date();
+        twoMonthsOut.setMonth(twoMonthsOut.getMonth() + 2);
+        const twoMonthsMs = twoMonthsOut.getTime();
+        const withinTwoMonths = [...facilityEarliest.values()].filter(({ range }) => parseDate(String(range.startDate)) <= twoMonthsMs);
+        const newFindings = withinTwoMonths.filter(({ key }) => !state.alerted[key] || now - state.alerted[key] >= 2 * 60 * 60 * 1000);
         if (newFindings.length > 0) {
           facilitiesWithAvailability = newFindings.length;
           for (const { key } of newFindings) {

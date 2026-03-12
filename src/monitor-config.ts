@@ -26,12 +26,12 @@ function getDateRanges(): Array<{ label: string; startDate: string; nights: numb
   const daysToFriday = (5 - dayOfWeek + 7) % 7; // 0 if today is Friday
   const firstFriday = new Date(today.getTime() + daysToFriday * 86400000);
 
-  const sixMonthsOut = new Date(today);
-  sixMonthsOut.setMonth(sixMonthsOut.getMonth() + 6);
+  const threeMonthsOut = new Date(today);
+  threeMonthsOut.setMonth(threeMonthsOut.getMonth() + 3);
 
   const ranges: Array<{ label: string; startDate: string; nights: number }> = [];
   let current = new Date(firstFriday);
-  while (current <= sixMonthsOut) {
+  while (current <= threeMonthsOut) {
     const mm = String(current.getMonth() + 1).padStart(2, '0');
     const dd = String(current.getDate()).padStart(2, '0');
     const yyyy = current.getFullYear();
