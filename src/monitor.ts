@@ -437,23 +437,17 @@ class CampgroundMonitor {
     return { releaseDate: releaseDateApiFormat, releaseDateIso, releaseDateLabel, foundCount: results.length, results, errors, checkedAt: nowIso() };
   }
 
-  formatAlert(target: Record<string, unknown>, range: Record<string, unknown>, result: Record<string, unknown>): string {
-    const tier = Number(target.tier);
-    const tierEmoji = tier === 1 ? '🔥' : tier === 2 ? '⭐' : '📍';
-    const tierText = tier === 1 ? 'Tier 1 — High demand' : tier === 2 ? 'Tier 2 — Great pick' : 'Tier 3 — Good option';
-    const parkInfo = (PARK_INFO as Record<string, { parkId: number; description: string }>)[String(target.parkName)];
-    const bookingUrl = parkInfo
-      ? `https://www.reservecalifornia.com/#/park/${parkInfo.parkId}/${target.facilityId}`
-      : 'https://www.reservecalifornia.com';
-    const description = parkInfo?.description ?? '';
-    const siteList = (result.sites as Array<Record<string, unknown>>).map((site) => `  ${site.name} ($${site.rate}/night)`).join('\n');
-    return (
-      `${tierEmoji} <b>${target.parkName}</b> — ${target.facilityName} | ${tierText}\n` +
-      (description ? `<i>${description}</i>\n` : '') +
-      `${formatDateRange(String(range.startDate), Number(range.nights))} (${range.nights} nights): <b>${result.available} sites available</b> (of ${result.total})\n` +
-      siteList + '\n' +
-      `🔗 <a href="${bookingUrl}">Book on ReserveCalifornia</a>`
-    );
+  formatCombinedAlert(findings: Array<{ target: Record<string, unknown>; range: Record<string, unknown> }>): string {
+    const parseDate = (s: string) => { const [mm, dd, yyyy] = s.split('-'); return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime(); };
+    const sorted = [...findings].sort((a, b) => parseDate(String(a.range.startDate)) - parseDate(String(b.range.startDate)));
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    const lines: string[] = [`${today} - ${findings.length} open`];
+    for (const { target, range } of sorted) {
+      const dr = formatDateRange(String(range.startDate), Number(range.nights));
+      const name = `${target.parkName} ${target.facilityName}`;
+      lines.push(`${dr} available - ${name}`);
+    }
+    return lines.join('\n');
   }
 
   async runCheck(mode = 'scheduled'): Promise<Record<string, unknown>> {
@@ -497,8 +491,8 @@ class CampgroundMonitor {
     this.recordEvent(state, `Started ${mode} run`);
     this.saveState(state);
 
-    // alertsByDate groups alerts per weekend for organised per-weekend messages
-    const alertsByDate = new Map<string, { label: string; items: string[] }>();
+    // allAvailable collects every (target, range, key) where available > 0 this run
+    const allAvailable: Array<{ target: Record<string, unknown>; range: Record<string, unknown>; key: string }> = [];
     const newOpenings: Array<{ parkName: string; facilityName: string; rangeLabel: string; available: number }> = [];
     let facilitiesWithAvailability = 0;
     const now = Date.now();
@@ -537,14 +531,8 @@ class CampgroundMonitor {
           }
           run.successfulChecks += 1;
           if (result.available > 0) {
-            facilitiesWithAvailability += 1;
-            const dateKey = String(range.startDate);
-            if (!alertsByDate.has(dateKey)) {
-              alertsByDate.set(dateKey, { label: String(range.label), items: [] });
-            }
-            alertsByDate.get(dateKey)!.items.push(this.formatAlert(target, range, result));
+            allAvailable.push({ target, range, key });
             newOpenings.push({ parkName: String(target.parkName), facilityName: String(target.facilityName), rangeLabel: String(range.label), available: result.available });
-            state.alerted[key] = now;
             this.recordEvent(state, `Availability found at ${target.parkName} ${target.facilityName} (${range.label})`);
           }
         }
@@ -567,24 +555,27 @@ class CampgroundMonitor {
         this.saveState(state);
       }
 
-      if (alertsByDate.size > 0) {
-        // Sort weekends nearest-first (startDate is MM-DD-YYYY)
-        const parseMMDDYYYY = (s: string) => {
-          const [mm, dd, yyyy] = s.split('-');
-          return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime();
-        };
-        const sortedWeekends = [...alertsByDate.entries()].sort(([a], [b]) => parseMMDDYYYY(a) - parseMMDDYYYY(b));
-        for (const [, { label, items }] of sortedWeekends) {
-          const header = `<b>Campsite Alert — ${label}</b>\n\n`;
-          let message = header;
-          for (const alert of items) {
-            if (message.length + alert.length + 2 > 3800) {
-              await this.sendTelegram(config.GROUP_CHAT_ID, message.trimEnd(), { html: true });
-              message = header;
-            }
-            message += `${alert}\n\n`;
+      if (allAvailable.length > 0) {
+        // Pick earliest available date per facility
+        const parseDate = (s: string) => { const [mm, dd, yyyy] = s.split('-'); return new Date(Number(yyyy), Number(mm) - 1, Number(dd)).getTime(); };
+        const facilityEarliest = new Map<string, { target: Record<string, unknown>; range: Record<string, unknown>; key: string }>();
+        for (const entry of allAvailable) {
+          const fid = String(entry.target.facilityId);
+          const existing = facilityEarliest.get(fid);
+          if (!existing || parseDate(String(entry.range.startDate)) < parseDate(String(existing.range.startDate))) {
+            facilityEarliest.set(fid, entry);
           }
-          await this.sendTelegram(config.GROUP_CHAT_ID, message.trimEnd(), { html: true });
+        }
+
+        // Only send if there are new (non-recently-alerted) findings
+        const newFindings = [...facilityEarliest.values()].filter(({ key }) => !state.alerted[key] || now - state.alerted[key] >= 2 * 60 * 60 * 1000);
+        if (newFindings.length > 0) {
+          facilitiesWithAvailability = newFindings.length;
+          for (const { key } of newFindings) {
+            state.alerted[key] = now;
+          }
+          const message = this.formatCombinedAlert(newFindings);
+          await this.sendTelegram(config.GROUP_CHAT_ID, message);
         }
       }
 
@@ -592,10 +583,9 @@ class CampgroundMonitor {
       state.lastSuccessAt = state.lastCheck;
       state.lastError = null;
       run.success = true;
-      const totalAlerts = [...alertsByDate.values()].reduce((sum, { items }) => sum + items.length, 0);
-      run.alertsSent = totalAlerts;
+      run.alertsSent = facilitiesWithAvailability;
       run.facilitiesWithAvailability = facilitiesWithAvailability;
-      this.recordEvent(state, `Completed ${mode} run: ${totalAlerts} alerts, ${facilitiesWithAvailability} openings`);
+      this.recordEvent(state, `Completed ${mode} run: ${facilitiesWithAvailability} alerts, ${facilitiesWithAvailability} openings`);
 
       const todayDate = this.localDateString();
       const existingDaily = state.dailyStats as Record<string, unknown> | null;
