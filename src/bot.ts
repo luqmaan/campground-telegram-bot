@@ -15,6 +15,7 @@ const {
   usersMessage,
 } = require('./commands.ts');
 const { extractMessageUploads, uploadsPromptBlock } = require('./media.ts');
+const { spawnSync: spawnSyncNode } = require('node:child_process');
 const { applyRef, deployStatusMessage, repoSummary, scheduleDeploy, shouldDeployFiles } = require('./repo-actions.ts');
 const { startClaudeTask } = require('./runner-claude.ts');
 const { startCodexTask } = require('./runner-codex.ts');
@@ -844,21 +845,25 @@ async function handleCommand(message: TelegramMessage, uploads: Array<Record<str
 
   if (command.type === 'pause-monitor') {
     monitor.pauseScheduler();
+    spawnSyncNode('pm2', ['restart', config.PM2_MONITOR_APP_NAME], { encoding: 'utf8' });
     await sendTelegram(chatId, 'Monitor scheduler paused.', { threadId });
     return;
   }
 
   if (command.type === 'resume-monitor') {
-    await monitor.resumeScheduler();
+    const state = monitor.loadState();
+    state.schedulerEnabled = true;
+    monitor.recordEvent(state, 'Scheduler resumed via command');
+    monitor.saveState(state);
+    spawnSyncNode('pm2', ['restart', config.PM2_MONITOR_APP_NAME], { encoding: 'utf8' });
     await sendTelegram(chatId, 'Monitor scheduler running.', { threadId });
     return;
   }
 
   if (command.type === 'restart-monitor') {
     try {
-      const requestedBy = displayName(profileFromTelegramUser(message.from || {}));
-      const result = scheduleDeploy(requestedBy, null);
-      await sendTelegram(chatId, `Restarting bot process... ${result.message}`, { threadId });
+      spawnSyncNode('pm2', ['restart', config.PM2_MONITOR_APP_NAME], { encoding: 'utf8' });
+      await sendTelegram(chatId, 'Monitor restarted.', { threadId });
     } catch (error) {
       await sendTelegram(chatId, `Restart failed: ${error instanceof Error ? error.message : String(error)}`, { threadId });
     }
@@ -1263,7 +1268,6 @@ async function main(): Promise<void> {
     log('WARN', 'Reconciled interrupted runner tasks', repairedTasks);
     await reconcileInterruptedTaskCards(repairedTasks);
   }
-  await monitor.startScheduler();
   scheduleDailySummary();
   schedule8amReleaseCheck();
   await pollLoop();

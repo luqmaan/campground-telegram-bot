@@ -42,7 +42,8 @@ try {
   save(baseState);
 
   run('pm2', ['delete', config.PM2_APP_NAME], true);
-  run('pm2', ['start', 'ecosystem.config.cjs', '--only', config.PM2_APP_NAME]);
+  run('pm2', ['delete', config.PM2_MONITOR_APP_NAME], true);
+  run('pm2', ['start', 'ecosystem.config.cjs', '--only', `${config.PM2_APP_NAME},${config.PM2_MONITOR_APP_NAME}`]);
   run('pm2', ['save']);
 
   baseState.status = 'succeeded';
